@@ -2667,6 +2667,8 @@ def _cfds_derive_lost_packets(df, packet_col: str | None, frame: int) -> str:
     return str(max(0, lost))
 
 
+
+
 def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) -> None:
     """Launch-day live graph style dashboard.
     This is replay-live from the normalized CSV unless a real live source is connected later.
@@ -2700,6 +2702,12 @@ def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) 
     gps_alt_col = _cfds_find_col(df, ["GPS_ALTITUDE", "GPS_ALT", "GNSS_ALTITUDE"])
 
     default_frame = min(len(df) - 1, max(0, len(df)//4))
+
+    # Streamlit rule: do not assign to a widget's session_state key after the widget is instantiated.
+    # Reset/End buttons write to a separate pending key, then the value is applied before st.slider() renders.
+    if "cfds_live_frame_pending" in st.session_state:
+        st.session_state["cfds_live_frame"] = int(max(0, min(st.session_state.pop("cfds_live_frame_pending"), len(df) - 1)))
+
     frame = st.slider(
         "Live replay frame",
         min_value=0,
@@ -2711,10 +2719,10 @@ def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) 
     )
     c1, c2, c3 = st.columns(3)
     if c1.button("↺ Reset live frame", use_container_width=True, key="cfds_live_reset"):
-        st.session_state["cfds_live_frame"] = 0
+        st.session_state["cfds_live_frame_pending"] = 0
         st.rerun()
     if c2.button("⏭ End", use_container_width=True, key="cfds_live_end"):
-        st.session_state["cfds_live_frame"] = len(df) - 1
+        st.session_state["cfds_live_frame_pending"] = len(df) - 1
         st.rerun()
     trail_choice = c3.selectbox("Trail", ["Full trail", "Last 30 rows", "Last 100 rows"], index=0, key="cfds_live_trail")
     trail_points = None if trail_choice == "Full trail" else (30 if "30" in trail_choice else 100)
@@ -2763,21 +2771,25 @@ def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) 
         unsafe_allow_html=True,
     )
 
-    tabs = st.tabs(["Altitude", "Power", "Environment"])
-    for tab, (title, fields) in zip(tabs, plot_groups):
-        with tab:
-            active_fields = [(label, col) for label, col in fields if col]
-            if not active_fields:
-                st.info(f"No usable columns found for {title}.")
-            else:
-                fig = _cfds_make_live_field_fig(df, frame_df, active_fields, title, mobile_fast)
-                st.plotly_chart(
-                    fig,
-                    width="stretch",
-                    theme=None,
-                    config={"displaylogo": False, "responsive": True, "displayModeBar": not mobile_fast},
-                    key=f"cfds_live_{title.lower()}",
-                )
+    live_items = [
+        ("Mission time", bool(time_col), time_col or "missing"),
+        ("Temperature", bool(temp_col), temp_col or "missing"),
+        ("GPS position", bool(lat_col and lon_col), f"{lat_col or 'missing'} / {lon_col or 'missing'}"),
+        ("Received packets", bool(packet_col), packet_col or "missing"),
+        ("Lost packets", bool(lost_col or packet_col), (lost_col or "derived from packet count" if packet_col else "missing")),
+        ("FSW state", bool(state_col), state_col or "missing"),
+        ("5 plotted/displayable fields", available_plot_fields >= 5, f"{available_plot_fields}/5 fields"),
+    ]
+    live_rows = []
+    for name, ok, detail in live_items:
+        status = "✅ HAVE" if ok else "⚠️ CHECK"
+        live_rows.append(_cfds_row("Launch Live Evidence", name, status, detail, "live/replay dashboard"))
+
+    st.markdown(
+        '<div class="cfds-live-note">Mission 3D graph removed. This section now focuses on Launch scoresheet evidence only: required live fields, packet monitoring, and replay/live readiness.</div>',
+        unsafe_allow_html=True,
+    )
+    _cfds_render_evidence_table(live_rows, "launch_live_evidence_compact_table")
 
 
 # --- Score Evidence / Rubric Checker -------------------------------------------------
@@ -3122,27 +3134,23 @@ def _cfds_summary_counts(rows: list[dict]) -> dict:
     return out
 
 
-def _cfds_status_css(status: str) -> str:
+
+def _cfds_status_theme(status: str) -> tuple[str, str, str]:
     s = str(status)
     if "HAVE" in s:
-        return "background-color:#063B2A; color:#8EF8B8; font-weight:800; border-left:4px solid #22C55E;"
+        return "#063B2A", "#8EF8B8", "#22C55E"
     if "CHECK" in s or "PARTIAL" in s:
-        return "background-color:#3A2A06; color:#FFE08A; font-weight:800; border-left:4px solid #F59E0B;"
+        return "#3A2A06", "#FFE08A", "#F59E0B"
     if "MISSING" in s:
-        return "background-color:#3B0D14; color:#FF9AAE; font-weight:800; border-left:4px solid #EF4444;"
+        return "#3B0D14", "#FF9AAE", "#EF4444"
     if "MANUAL" in s:
-        return "background-color:#20133A; color:#D8B4FE; font-weight:800; border-left:4px solid #A855F7;"
-    return "background-color:#071827; color:#EAFBFF;"
+        return "#20133A", "#D8B4FE", "#A855F7"
+    return "#071827", "#EAFBFF", "#1E526C"
 
 
-def _cfds_style_evidence_row(row):
-    status = str(row.get("Status", ""))
-    css = _cfds_status_css(status)
-    soft = css.replace("font-weight:800;", "font-weight:600;")
-    return [
-        soft if col in ["Section", "Rubric item", "Evidence / value", "Source"] else css
-        for col in row.index
-    ]
+def _cfds_status_css(status: str) -> str:
+    bg, fg, bd = _cfds_status_theme(status)
+    return f"background-color:{bg}; color:{fg}; font-weight:800; border-left:4px solid {bd};"
 
 
 def _cfds_render_status_legend() -> None:
@@ -3159,32 +3167,44 @@ def _cfds_render_status_legend() -> None:
     )
 
 
+def _cfds_html_escape(value) -> str:
+    import html
+    return html.escape("" if value is None else str(value))
+
+
 def _cfds_render_evidence_table(rows: list[dict], key: str) -> None:
-    import pandas as pd
     summary = _cfds_summary_counts(rows)
     st.markdown(
         '<div class="cfds-evidence-summary">'
-        + ''.join(f'<div class="cfds-evidence-kpi"><span>{k}</span><b>{v}</b></div>' for k, v in summary.items())
+        + ''.join(f'<div class="cfds-evidence-kpi"><span>{_cfds_html_escape(k)}</span><b>{v}</b></div>' for k, v in summary.items())
         + '</div>',
         unsafe_allow_html=True,
     )
     _cfds_render_status_legend()
-    df_rows = pd.DataFrame(rows)
-    styled = (
-        df_rows.style
-        .apply(_cfds_style_evidence_row, axis=1)
-        .set_properties(**{
-            "background-color": "#071827",
-            "color": "#EAFBFF",
-            "border-color": "#123247",
-        })
-    )
-    st.dataframe(
-        styled,
-        width="stretch",
-        hide_index=True,
-        key=key,
-        row_height=38,
+
+    headers = ["Section", "Rubric item", "Status", "Evidence / value", "Source"]
+    html_rows = []
+    for r in rows:
+        bg, fg, bd = _cfds_status_theme(r.get("Status", ""))
+        cells = []
+        for h in headers:
+            val = _cfds_html_escape(r.get(h, ""))
+            if h == "Status":
+                cells.append(f'<td class="cfds-status-cell" style="background:{bg};color:{fg};border-left:4px solid {bd};">{val}</td>')
+            else:
+                cells.append(f'<td style="background:linear-gradient(90deg,{bg},#071827 72%);color:{fg};">{val}</td>')
+        html_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    st.markdown(
+        f'''
+        <div class="cfds-table-wrap" id="{_cfds_html_escape(key)}">
+          <table class="cfds-evidence-table">
+            <thead><tr>{''.join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+            <tbody>{''.join(html_rows)}</tbody>
+          </table>
+        </div>
+        ''',
+        unsafe_allow_html=True,
     )
 
 
@@ -3596,6 +3616,190 @@ st.markdown(
         border: 1px solid rgba(56,213,255,.35) !important;
         background: rgba(7,24,39,.75) !important;
         padding: 4px !important;
+    }
+
+
+    /* Dark-blue interaction/flicker system
+       Keep every temporary focus/pulse/loading visual in the CFDS dark-blue palette.
+       Avoid white/red flashes except semantic error cards from Streamlit itself. */
+    :root {
+        --cfds-flash-bg: #071827;
+        --cfds-flash-bg-2: #0A2A43;
+        --cfds-flash-border: #1E526C;
+        --cfds-flash-cyan: #38D5FF;
+        --cfds-focus-ring: rgba(56, 213, 255, .42);
+    }
+
+    @keyframes cfds-dark-blue-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(56,213,255,.18); border-color:#1E526C; background-color:#071827; }
+        50%  { box-shadow: 0 0 0 4px rgba(56,213,255,.10); border-color:#38D5FF; background-color:#0A2A43; }
+        100% { box-shadow: 0 0 0 0 rgba(56,213,255,.18); border-color:#1E526C; background-color:#071827; }
+    }
+
+    /* Streamlit widgets: focus/active should not become white/red. */
+    .stButton > button:focus,
+    .stButton > button:focus-visible,
+    .stDownloadButton > button:focus,
+    .stDownloadButton > button:focus-visible,
+    div[data-baseweb="select"] *:focus,
+    div[data-baseweb="input"] input:focus,
+    textarea:focus,
+    input:focus {
+        outline: 2px solid var(--cfds-focus-ring) !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 2px rgba(56,213,255,.16) !important;
+        border-color: var(--cfds-flash-cyan) !important;
+        background-color: var(--cfds-flash-bg) !important;
+    }
+
+    /* File uploader / selected file chip / upload drop zone */
+    [data-testid="stFileUploader"] section,
+    [data-testid="stFileUploader"] div,
+    .cfds-uploaded-chip {
+        transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+
+    [data-testid="stFileUploader"] section:focus-within,
+    [data-testid="stFileUploader"] section:hover,
+    .cfds-uploaded-chip:hover {
+        border-color: var(--cfds-flash-cyan) !important;
+        background-color: var(--cfds-flash-bg-2) !important;
+        box-shadow: 0 0 0 2px rgba(56,213,255,.12) inset !important;
+    }
+
+    /* Progress / status / temporary info surfaces */
+    [data-testid="stStatusWidget"],
+    [data-testid="stSpinner"],
+    [data-testid="stProgress"] {
+        color: #EAFBFF !important;
+    }
+
+    [data-testid="stProgress"] > div > div > div > div {
+        background: linear-gradient(90deg, #0A2A43, #38D5FF) !important;
+    }
+
+    /* CFDS cards/chips can pulse, but only in dark blue. */
+    .cfds-state-pill,
+    .cfds-play-chip:active,
+    .cfds-skip-chip:active,
+    .cfds-live-card:focus-within,
+    .cfds-evidence-kpi:focus-within,
+    .cfds-mobile-replay-strip:focus-within {
+        animation: cfds-dark-blue-pulse 1.2s ease-in-out 1;
+    }
+
+    /* Make Streamlit warning/info backgrounds less visually harsh inside dark theme. */
+    div[data-testid="stAlert"] {
+        border-radius: 14px !important;
+        border-color: rgba(56,213,255,.22) !important;
+    }
+
+    /* Accessibility: if the device asks for reduced motion, disable pulse entirely. */
+    @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+            animation-duration: .001ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: .001ms !important;
+            scroll-behavior: auto !important;
+        }
+    }
+
+
+    /* Final dark-blue transient override: hover/focus/active/loading must not white-flash. */
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    .stButton > button:active,
+    .stDownloadButton > button:active {
+        background: #0A2A43 !important;
+        border-color: #38D5FF !important;
+        color: #EAFBFF !important;
+        box-shadow: 0 0 0 2px rgba(56,213,255,.14) inset !important;
+    }
+    [data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stBaseButton-secondary"]:hover {
+        background: #0A2A43 !important;
+        border-color: #38D5FF !important;
+        color: #EAFBFF !important;
+    }
+
+
+    /* No white boxes: checkbox, rubric table header, fallback dataframe */
+    .cfds-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        border: 1px solid rgba(56,213,255,.24);
+        border-radius: 14px;
+        background: #071827;
+        margin-top: .55rem;
+    }
+    table.cfds-evidence-table {
+        width: 100%;
+        min-width: 980px;
+        border-collapse: separate;
+        border-spacing: 0;
+        background: #071827;
+        color: #EAFBFF;
+        font-size: .82rem;
+    }
+    table.cfds-evidence-table thead th {
+        position: sticky;
+        top: 0;
+        background: #0A2A43 !important;
+        color: #EAFBFF !important;
+        border-bottom: 1px solid rgba(56,213,255,.35);
+        padding: .62rem .72rem;
+        text-align: left;
+        font-weight: 900;
+        letter-spacing: .05em;
+        white-space: nowrap;
+    }
+    table.cfds-evidence-table tbody td {
+        border-bottom: 1px solid rgba(56,213,255,.10);
+        padding: .58rem .72rem;
+        vertical-align: top;
+        line-height: 1.28;
+    }
+    table.cfds-evidence-table tbody tr:hover td {
+        filter: brightness(1.18);
+    }
+    table.cfds-evidence-table .cfds-status-cell {
+        white-space: nowrap;
+        font-weight: 900;
+        letter-spacing: .02em;
+    }
+
+    /* Streamlit checkbox white-square override */
+    div[data-testid="stCheckbox"] label,
+    div[data-testid="stCheckbox"] label span,
+    div[data-testid="stCheckbox"] div,
+    label[data-baseweb="checkbox"],
+    label[data-baseweb="checkbox"] span {
+        color: #EAFBFF !important;
+    }
+    div[data-testid="stCheckbox"] [data-baseweb="checkbox"] > div,
+    label[data-baseweb="checkbox"] > div,
+    label[data-baseweb="checkbox"] span:first-child,
+    div[data-testid="stCheckbox"] span:first-child {
+        background-color: #071827 !important;
+        border-color: #38D5FF !important;
+        box-shadow: 0 0 0 1px rgba(56,213,255,.22) inset !important;
+    }
+    div[data-testid="stCheckbox"] svg,
+    label[data-baseweb="checkbox"] svg {
+        color: #38D5FF !important;
+        fill: #38D5FF !important;
+        stroke: #38D5FF !important;
+    }
+    div[data-testid="stCheckbox"]:hover span:first-child,
+    label[data-baseweb="checkbox"]:hover span:first-child {
+        background-color: #0A2A43 !important;
+        border-color: #38D5FF !important;
+    }
+
+    div[data-testid="stDataFrame"] * { color-scheme: dark !important; }
+    div[data-testid="stDataFrame"] [role="columnheader"] {
+        background: #0A2A43 !important;
+        color: #EAFBFF !important;
     }
 
     /* Selectbox / dropdown text */
