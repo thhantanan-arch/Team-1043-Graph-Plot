@@ -2158,18 +2158,40 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             event_buttons.append(f'<span class="cfds-skip-chip"><b>{name}</b><em>{tx:.1f}s</em></span>')
     except Exception:
         event_buttons = []
+    right_state = state_preview
+    right_next = next_event
+    try:
+        alt_col = _find_first_col(replay_df, ["ALTITUDE", "ALTITUDE_M", "altitude", "Altitude"])
+        alt_now = float(pd.to_numeric(replay_df[alt_col], errors="coerce").interpolate().iloc[min(max(0, len(replay_df)//4), len(replay_df)-1)]) if alt_col else None
+        alt_text = f"{alt_now:.1f} m" if alt_now is not None and np.isfinite(alt_now) else "—"
+    except Exception:
+        alt_text = "—"
     st.markdown(f'''
-        <div class="cfds-replay-action-deck">
-          <div class="cfds-replay-action-left">
-            <div class="cfds-action-title">{graph_type.upper()}</div>
-            <div class="cfds-action-sub">browser replay controls • state jump markers • reset view in Plotly modebar</div>
+        <div class="cfds-replay-action-deck cfds-action-deck-pair">
+          <div class="cfds-replay-action-main">
+            <div class="cfds-replay-action-left">
+              <div class="cfds-action-title">{graph_type.upper()}</div>
+              <div class="cfds-action-sub">browser replay controls • state jump markers • reset view in Plotly modebar</div>
+            </div>
+            <div class="cfds-replay-action-buttons">
+              <span class="cfds-play-chip">▶ Play</span>
+              <span class="cfds-play-chip">⏸ Pause</span>
+              <span class="cfds-play-chip">⌂ Reset view</span>
+            </div>
+            <div class="cfds-replay-skip-row">{''.join(event_buttons)}</div>
           </div>
-          <div class="cfds-replay-action-buttons">
-            <span class="cfds-play-chip">▶ Play</span>
-            <span class="cfds-play-chip">⏸ Pause</span>
-            <span class="cfds-play-chip">⌂ Reset view</span>
+          <div class="cfds-replay-action-side">
+            <div class="cfds-live-card">
+              <span>CURRENT STATE</span>
+              <b>{right_state}</b>
+              <em>t = {t_preview:.1f}s • alt = {alt_text}</em>
+            </div>
+            <div class="cfds-live-card">
+              <span>NEXT EVENT</span>
+              <b>{right_next}</b>
+              <em>jump chips stay on the left</em>
+            </div>
           </div>
-          <div class="cfds-replay-skip-row">{''.join(event_buttons)}</div>
         </div>
         ''', unsafe_allow_html=True)
 
@@ -3698,10 +3720,17 @@ st.markdown("""
     margin:.65rem 0 .75rem 0;
     box-shadow:0 0 0 1px rgba(56,213,255,.06) inset;
   }
+  .cfds-action-deck-pair { display:grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 360px); gap:14px; align-items:stretch; }
+  .cfds-replay-action-main { min-width:0; }
+  .cfds-replay-action-side { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:stretch; }
   .cfds-replay-action-left { display:flex; align-items:baseline; gap:.8rem; flex-wrap:wrap; }
   .cfds-action-title { color:#EAFBFF; font-size:1.05rem; font-weight:900; letter-spacing:.08em; }
   .cfds-action-sub { color:#9DB7C9; font-size:.78rem; }
   .cfds-replay-action-buttons { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.65rem; }
+  .cfds-live-card { min-height:74px; border:1px solid rgba(56,213,255,.42); background:#071827; border-radius:14px; padding:11px 12px; display:flex; flex-direction:column; justify-content:center; }
+  .cfds-live-card span { color:#9DB7C9; font-size:.66rem; font-weight:900; letter-spacing:.10em; }
+  .cfds-live-card b { color:#EAFBFF; font-size:.92rem; line-height:1.15; margin-top:4px; word-break:break-word; }
+  .cfds-live-card em { color:#38D5FF; font-style:normal; font-size:.70rem; margin-top:5px; }
   .cfds-play-chip, .cfds-skip-chip {
     display:inline-flex; align-items:center; justify-content:center; gap:.35rem;
     min-height:34px; padding:0 13px; border-radius:999px;
@@ -3715,8 +3744,13 @@ st.markdown("""
   .cfds-graph-titlebar-only { display:none !important; min-height:0 !important; padding:0 !important; margin:0 !important; }
   @media (max-width: 760px) {
     .cfds-replay-action-deck { padding:12px; }
+    .cfds-action-deck-pair { grid-template-columns:1fr; }
+    .cfds-replay-action-side { grid-template-columns:1fr 1fr; }
     .cfds-play-chip, .cfds-skip-chip { flex:1 1 42%; min-height:38px; }
     .cfds-action-title { font-size:.95rem; }
+  }
+  @media (max-width: 430px) {
+    .cfds-replay-action-side { grid-template-columns:1fr; }
   }
 </style>
 """, unsafe_allow_html=True)
