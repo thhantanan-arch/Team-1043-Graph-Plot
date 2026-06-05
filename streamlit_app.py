@@ -76,7 +76,61 @@ st.markdown(
         .block-container { padding-left: 0.55rem; padding-right: 0.55rem; }
         .cfds-hero { border-radius: 16px; padding: 0.85rem; }
         .cfds-hero p { font-size: 0.88rem; }
-        div[data-testid="stImage"] img { border-radius: 10px; }
+    
+    /* ---------- Visibility fix for mission input / upload / generation panels ---------- */
+    .cfds-panel,
+    .cfds-panel * {
+        color: var(--cfds-text) !important;
+    }
+    .cfds-panel-title {
+        color: var(--cfds-cyan) !important;
+        text-shadow: 0 0 12px rgba(56, 213, 255, .22);
+    }
+    div[data-testid="stFileUploader"] {
+        background: rgba(7,24,39,.72) !important;
+        border: 1px solid rgba(56,213,255,.24) !important;
+        border-radius: 14px !important;
+        padding: .35rem .55rem !important;
+    }
+    div[data-testid="stFileUploader"] label,
+    div[data-testid="stFileUploader"] label p,
+    div[data-testid="stFileUploader"] small,
+    div[data-testid="stFileUploader"] span,
+    div[data-testid="stFileUploader"] div,
+    div[data-testid="stFileUploader"] section,
+    div[data-testid="stFileUploader"] [data-testid="stWidgetLabel"] p {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stFileUploader"] section {
+        background: rgba(14,43,69,.78) !important;
+        border: 1px dashed rgba(56,213,255,.42) !important;
+    }
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploaderDropzone"] button {
+        background: linear-gradient(180deg, #0B84FF, #0067C8) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(221,248,255,.65) !important;
+        font-weight: 800 !important;
+    }
+    div[data-testid="stFileUploaderDropzone"] svg,
+    div[data-testid="stFileUploader"] svg {
+        color: #38D5FF !important;
+        fill: #38D5FF !important;
+        opacity: 1 !important;
+    }
+    .stCheckbox label, .stRadio label, .stSlider label,
+    .stSelectbox label, .stMultiSelect label {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+    .stCheckbox p, .stRadio p, .stSlider p,
+    .stSelectbox p, .stMultiSelect p {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+
+    div[data-testid="stImage"] img { border-radius: 10px; }
     }
     </style>
     """,
@@ -170,6 +224,60 @@ st.markdown(
         background: rgba(7,24,39,.55) !important;
         border-color: rgba(56,213,255,.16) !important;
     }
+
+    /* ---------- Visibility fix for mission input / upload / generation panels ---------- */
+    .cfds-panel,
+    .cfds-panel * {
+        color: var(--cfds-text) !important;
+    }
+    .cfds-panel-title {
+        color: var(--cfds-cyan) !important;
+        text-shadow: 0 0 12px rgba(56, 213, 255, .22);
+    }
+    div[data-testid="stFileUploader"] {
+        background: rgba(7,24,39,.72) !important;
+        border: 1px solid rgba(56,213,255,.24) !important;
+        border-radius: 14px !important;
+        padding: .35rem .55rem !important;
+    }
+    div[data-testid="stFileUploader"] label,
+    div[data-testid="stFileUploader"] label p,
+    div[data-testid="stFileUploader"] small,
+    div[data-testid="stFileUploader"] span,
+    div[data-testid="stFileUploader"] div,
+    div[data-testid="stFileUploader"] section,
+    div[data-testid="stFileUploader"] [data-testid="stWidgetLabel"] p {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stFileUploader"] section {
+        background: rgba(14,43,69,.78) !important;
+        border: 1px dashed rgba(56,213,255,.42) !important;
+    }
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploaderDropzone"] button {
+        background: linear-gradient(180deg, #0B84FF, #0067C8) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(221,248,255,.65) !important;
+        font-weight: 800 !important;
+    }
+    div[data-testid="stFileUploaderDropzone"] svg,
+    div[data-testid="stFileUploader"] svg {
+        color: #38D5FF !important;
+        fill: #38D5FF !important;
+        opacity: 1 !important;
+    }
+    .stCheckbox label, .stRadio label, .stSlider label,
+    .stSelectbox label, .stMultiSelect label {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+    .stCheckbox p, .stRadio p, .stSlider p,
+    .stSelectbox p, .stMultiSelect p {
+        color: #DDF8FF !important;
+        opacity: 1 !important;
+    }
+
     div[data-testid="stImage"] img {
         border-radius: 12px !important;
         border: 1px solid rgba(56,213,255,.22);
@@ -1807,3 +1915,150 @@ if st.session_state.get("cfds_last_export") is not None:
 
 st.divider()
 st.caption("CFDS Web keeps the original graph engine, but uses a mobile-optimized browser interface for iPhone/iPad/desktop.")
+
+
+# Final mobile readability override: Streamlit widgets can inherit muted opacity from
+# internal wrappers on mobile. Keep this CSS at the end so it wins the cascade.
+st.markdown(
+    """
+    <style>
+    /* ---------- CFDS mobile control readability override ---------- */
+    :root {
+        --cfds-readable-text: #EAFBFF;
+        --cfds-readable-muted: #BFD7EA;
+        --cfds-readable-dim: #9DB7C9;
+        --cfds-readable-panel: rgba(7,24,39,.94);
+        --cfds-readable-card: rgba(14,43,69,.82);
+        --cfds-readable-border: rgba(56,213,255,.36);
+    }
+
+    /* Global widget labels: fix dim/low-opacity Streamlit text on iPhone */
+    [data-testid="stWidgetLabel"],
+    [data-testid="stWidgetLabel"] *,
+    [data-testid="stCheckbox"] label,
+    [data-testid="stCheckbox"] label *,
+    [data-testid="stRadio"] label,
+    [data-testid="stRadio"] label *,
+    [data-testid="stSlider"] label,
+    [data-testid="stSlider"] label *,
+    [data-testid="stSelectbox"] label,
+    [data-testid="stSelectbox"] label *,
+    [data-testid="stMultiSelect"] label,
+    [data-testid="stMultiSelect"] label *,
+    div[role="radiogroup"] label,
+    div[role="radiogroup"] label *,
+    div[data-testid="stMarkdownContainer"] p,
+    div[data-testid="stCaptionContainer"],
+    div[data-testid="stCaptionContainer"] * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+        filter: none !important;
+    }
+
+    /* Secondary/help text should be readable, not nearly black */
+    small, .stCaptionContainer, [data-testid="stHelp"], [data-testid="stTooltipIcon"] {
+        color: var(--cfds-readable-muted) !important;
+        opacity: 1 !important;
+    }
+
+    /* Radio/checkbox option rows: give each line enough visual weight */
+    div[role="radiogroup"] > label,
+    [data-testid="stCheckbox"] > label,
+    [data-testid="stRadio"] > label {
+        min-height: 2.05rem !important;
+        align-items: center !important;
+    }
+    div[role="radiogroup"] p,
+    [data-testid="stCheckbox"] p,
+    [data-testid="stRadio"] p {
+        font-size: .93rem !important;
+        line-height: 1.35 !important;
+        letter-spacing: .01em !important;
+    }
+
+    /* Section headers inside control panels */
+    .cfds-panel h1, .cfds-panel h2, .cfds-panel h3,
+    .cfds-panel p, .cfds-panel span, .cfds-panel label,
+    .cfds-panel [data-testid="stMarkdownContainer"] * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+    }
+    .cfds-panel-title,
+    .cfds-control-title,
+    .cfds-replay-kicker {
+        color: #38D5FF !important;
+        opacity: 1 !important;
+        text-shadow: 0 0 10px rgba(56,213,255,.20);
+    }
+
+    /* Selectbox / dropdown text */
+    [data-baseweb="select"],
+    [data-baseweb="select"] *,
+    [data-baseweb="popover"] *,
+    [data-baseweb="menu"] * {
+        color: #071827 !important;
+        opacity: 1 !important;
+    }
+    [data-baseweb="select"] > div {
+        background: #F7FCFF !important;
+        border: 1px solid rgba(56,213,255,.55) !important;
+        border-radius: 12px !important;
+    }
+
+    /* Sliders: make numeric value and track easier to see */
+    [data-testid="stSlider"] * {
+        opacity: 1 !important;
+    }
+    [data-testid="stSlider"] [data-testid="stTickBar"] * {
+        color: var(--cfds-readable-muted) !important;
+    }
+    [data-testid="stSlider"] div[role="slider"] {
+        box-shadow: 0 0 0 4px rgba(255,75,85,.18) !important;
+    }
+
+    /* File uploader: remove white unreadable button / dim description */
+    div[data-testid="stFileUploader"],
+    div[data-testid="stFileUploader"] section,
+    div[data-testid="stFileUploaderDropzone"] {
+        background: var(--cfds-readable-card) !important;
+        border: 1px dashed rgba(56,213,255,.50) !important;
+        border-radius: 14px !important;
+    }
+    div[data-testid="stFileUploader"] *,
+    div[data-testid="stFileUploaderDropzone"] * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploaderDropzone"] button {
+        background: linear-gradient(180deg, #0EA5E9, #0369A1) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(234,251,255,.75) !important;
+        border-radius: 12px !important;
+        font-weight: 900 !important;
+    }
+
+    /* Panel/card readability on phones */
+    .cfds-card, .metric-card, .replay-card,
+    [data-testid="stExpander"],
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--cfds-readable-panel) !important;
+        border-color: var(--cfds-readable-border) !important;
+    }
+
+    @media (max-width: 760px) {
+        .block-container { padding-left: .72rem !important; padding-right: .72rem !important; }
+        [data-testid="stWidgetLabel"] p,
+        div[role="radiogroup"] p,
+        [data-testid="stCheckbox"] p,
+        [data-testid="stRadio"] p {
+            font-size: .98rem !important;
+            line-height: 1.45 !important;
+        }
+        .cfds-panel { padding: 1rem .95rem !important; }
+        .cfds-panel-title { font-size: 1.02rem !important; letter-spacing: .16em !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
