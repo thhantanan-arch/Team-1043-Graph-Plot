@@ -215,7 +215,16 @@ st.markdown(
     .cfds-graph-titlebar h3 { color:#38d5ff; margin:0; letter-spacing:.08em; text-transform:uppercase; font-size:1rem; }
     .cfds-graph-titlebar span { color:#99b4c9; font-size:.78rem; }
     .cfds-mini-help { color:#99b4c9; font-size:.78rem; padding:.55rem .25rem 0 .25rem; }
-    @media (max-width: 760px) { .cfds-replay-shell { padding:.68rem; border-radius:16px; } .cfds-replay-head { display:block; } .cfds-replay-badges { justify-content:flex-start; margin-top:.6rem; } .cfds-status-grid { grid-template-columns:1fr; } .cfds-graph-card { padding:.35rem; } }
+    .cfds-event-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:.45rem; margin:.70rem .15rem .1rem .15rem; }
+    .cfds-event-chip { border:1px solid rgba(56,213,255,.20); background:rgba(7,24,39,.68); border-radius:12px; padding:.48rem .55rem; }
+    .cfds-event-chip span { display:block; color:#99b4c9; font-size:.62rem; letter-spacing:.09em; text-transform:uppercase; }
+    .cfds-event-chip b { display:block; color:#eaffff; font-size:.82rem; margin-top:.12rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .cfds-state-strip { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:.46rem; align-items:stretch; border:1px solid rgba(56,213,255,.18); background:rgba(7,24,39,.48); border-radius:12px; margin:1.05rem .15rem .55rem .15rem; padding:.72rem .72rem .68rem .72rem; position:relative; }
+    .cfds-state-strip-title { position:absolute; top:-.72rem; left:.72rem; background:#071827; color:#9db7c9; font-size:.64rem; letter-spacing:.12em; text-transform:uppercase; font-weight:900; padding:0 .42rem; }
+    .cfds-state-chip { display:flex; align-items:center; justify-content:center; gap:.36rem; min-height:2.15rem; padding:.35rem .44rem; color:#eafaff; font-size:.68rem; font-weight:800; letter-spacing:.055em; white-space:nowrap; border:1px solid rgba(234,251,255,.16); border-radius:10px; background:rgba(14,43,69,.50); overflow:hidden; text-overflow:ellipsis; }
+    .cfds-state-dot { width:.72rem; height:.72rem; min-width:.72rem; border-radius:999px; border:1px solid rgba(255,255,255,.78); box-shadow:0 0 0 1px rgba(0,0,0,.45); }
+    .cfds-replay-tipbar { border-top:1px solid rgba(56,213,255,.14); color:#99b4c9; margin-top:.55rem; padding:.55rem .2rem .05rem .2rem; font-size:.78rem; }
+    @media (max-width: 760px) { .cfds-replay-shell { padding:.68rem; border-radius:16px; } .cfds-replay-head { display:block; } .cfds-replay-badges { justify-content:flex-start; margin-top:.6rem; } .cfds-status-grid { grid-template-columns:1fr; } .cfds-graph-card { padding:.35rem; } .cfds-event-strip { grid-template-columns:1fr 1fr; gap:.35rem; } .cfds-state-strip { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.38rem; padding:.68rem .50rem .55rem .50rem; } .cfds-state-chip { justify-content:flex-start; font-size:.62rem; min-height:2.05rem; } }
     </style>
     """,
     unsafe_allow_html=True,
@@ -844,15 +853,65 @@ def _replay_dataframe_from_payload(payload: dict):
 
 
 def _downsample_for_replay(df, max_points: int):
-    """Downsample by index for phone-friendly replay without changing the original export."""
-    if len(df) <= max_points:
-        return df.reset_index(drop=True)
-    step = max(1, int(len(df) / max_points))
-    sampled = df.iloc[::step].copy()
-    if sampled.index[-1] != df.index[-1]:
-        sampled = __import__("pandas").concat([sampled, df.tail(1)], ignore_index=False)
-    return sampled.reset_index(drop=True)
+    """Create a uniformly timed replay dataframe.
 
+    Earlier versions downsampled by row index. That made the Plotly player feel jerky
+    because mission-time spacing between frames was uneven. For replay we instead
+    resample onto an even time grid, interpolate numeric telemetry, and forward-fill
+    categorical fields such as STATE. The export graph engine is untouched.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if df is None or df.empty or "__REPLAY_TIME_S" not in df.columns:
+        return df.reset_index(drop=True) if df is not None else df
+
+    try:
+        max_points = int(max(20, max_points))
+    except Exception:
+        max_points = 300
+
+    d = df.copy()
+    d["__REPLAY_TIME_S"] = pd.to_numeric(d["__REPLAY_TIME_S"], errors="coerce")
+    d = d.dropna(subset=["__REPLAY_TIME_S"]).sort_values("__REPLAY_TIME_S")
+    d = d.drop_duplicates(subset=["__REPLAY_TIME_S"], keep="last").reset_index(drop=True)
+    if d.empty or len(d) < 2:
+        return d.reset_index(drop=True)
+
+    t = d["__REPLAY_TIME_S"].to_numpy(dtype=float)
+    if len(d) <= max_points:
+        # Still normalize order/index; don't add frames unless requested.
+        return d.reset_index(drop=True)
+
+    new_t = np.linspace(float(t[0]), float(t[-1]), max_points)
+    out = pd.DataFrame({"__REPLAY_TIME_S": new_t})
+
+    for col in d.columns:
+        if col == "__REPLAY_TIME_S":
+            continue
+        ser_num = pd.to_numeric(d[col], errors="coerce")
+        numeric_ratio = float(ser_num.notna().mean()) if len(ser_num) else 0.0
+        if numeric_ratio >= 0.70:
+            valid = ser_num.notna().to_numpy()
+            if valid.sum() >= 2:
+                out[col] = np.interp(new_t, t[valid], ser_num.to_numpy(dtype=float)[valid])
+            elif valid.sum() == 1:
+                out[col] = float(ser_num[valid].iloc[0])
+            else:
+                out[col] = np.nan
+        else:
+            # Forward-fill text/category values onto the new time grid.
+            left = pd.DataFrame({"__REPLAY_TIME_S": new_t})
+            right = d[["__REPLAY_TIME_S", col]].copy().sort_values("__REPLAY_TIME_S")
+            merged = pd.merge_asof(left, right, on="__REPLAY_TIME_S", direction="backward")
+            if merged[col].isna().any():
+                merged[col] = merged[col].bfill().ffill()
+            out[col] = merged[col].to_numpy()
+
+    # Keep time columns aligned when present.
+    if "T_FROM_LAUNCH_S" in out.columns:
+        out["T_FROM_LAUNCH_S"] = out["__REPLAY_TIME_S"]
+    return out.reset_index(drop=True)
 
 def _replay_plot_data(df, graph_type: str):
     """Choose columns and display labels for the selected replay graph."""
@@ -893,15 +952,18 @@ def _replay_plot_data(df, graph_type: str):
 V1256_EXPECTED_STATES = [
     "LAUNCH_PAD", "ASCENT", "APOGEE", "DESCENT", "PROBE_RELEASE", "PAYLOAD_RELEASE", "LANDED"
 ]
+# Replay uses a dark graph workspace, so the original pastel V12.56 bands
+# are remapped to separated dark-safe hues. State logic is unchanged; only
+# the visual palette is adapted so adjacent bands do not collapse into gray.
 V1256_STATE_COLORS = {
-    "LAUNCH_PAD": "#FADBD8",
-    "ASCENT": "#D6EAF8",
-    "BURNOUT": "#FFF2CC",
-    "APOGEE": "#D5E8D4",
-    "DESCENT": "#E8DAEF",
-    "PROBE_RELEASE": "#FFF2CC",
-    "PAYLOAD_RELEASE": "#FCE5CD",
-    "LANDED": "#E8E8E8",
+    "LAUNCH_PAD": "#E11D48",      # rose / pad
+    "ASCENT": "#0284C7",          # blue / climb
+    "BURNOUT": "#FACC15",         # yellow / transition
+    "APOGEE": "#16A34A",          # green / peak
+    "DESCENT": "#7C3AED",         # violet / descent
+    "PROBE_RELEASE": "#CA8A04",   # amber / probe
+    "PAYLOAD_RELEASE": "#EA580C", # orange / payload
+    "LANDED": "#64748B",          # slate / landed
 }
 V1256_STATE_DISPLAY = {
     "LAUNCH_PAD": "LAUNCH_PAD",
@@ -912,7 +974,26 @@ V1256_STATE_DISPLAY = {
     "PAYLOAD_RELEASE": "PAYLOAD_RELEASE",
     "LANDED": "LANDED",
 }
-V1256_STAGE_ALPHA = 0.24
+# Short UI labels keep the legend readable on iPhone. Full state names still drive the logic.
+V1256_STATE_SHORT_LABELS = {
+    "LAUNCH_PAD": "PAD",
+    "ASCENT": "ASCENT",
+    "APOGEE": "APOGEE",
+    "DESCENT": "DESCENT",
+    "PROBE_RELEASE": "PROBE",
+    "PAYLOAD_RELEASE": "PAYLOAD",
+    "LANDED": "LANDED",
+}
+V1256_STATE_BORDERS = {
+    "LAUNCH_PAD": "#FDA4AF",
+    "ASCENT": "#7DD3FC",
+    "APOGEE": "#86EFAC",
+    "DESCENT": "#C4B5FD",
+    "PROBE_RELEASE": "#FDE68A",
+    "PAYLOAD_RELEASE": "#FDBA74",
+    "LANDED": "#CBD5E1",
+}
+V1256_STAGE_ALPHA = 0.18
 V1256_LINE_COLORS = {
     "Altitude": "#126FA3",
     "Velocity / Descent rate": "#1d4ed8",
@@ -995,11 +1076,11 @@ def _event_markers_for_replay(df):
         t = pd.to_numeric(d["__REPLAY_TIME_S"], errors="coerce")
         # Actual state first-points, matching the export graph semantics.
         state_events = [
-            ("ASCENT", "Launch", "#ef4444"),
-            ("APOGEE", "Apogee", "#ef4444"),
-            ("PROBE_RELEASE", "Probe", "#f59e0b"),
-            ("PAYLOAD_RELEASE", "Payload", "#f97316"),
-            ("LANDED", "Landing", "#38d5ff"),
+            ("ASCENT", "Launch", "#F43F5E"),
+            ("APOGEE", "Apogee", "#22C55E"),
+            ("PROBE_RELEASE", "Probe", "#FACC15"),
+            ("PAYLOAD_RELEASE", "Payload", "#FB923C"),
+            ("LANDED", "Landing", "#94A3B8"),
         ]
         for state, label, color in state_events:
             sub = d[d["__STATE_NORM"] == state]
@@ -1010,7 +1091,7 @@ def _event_markers_for_replay(df):
             alt_col, alt = _numeric_series(d, ["ALTITUDE", "ALT", "ALTITUDE_M"])
             if alt_col is not None and alt.notna().any():
                 imax = int(alt.idxmax())
-                events.append((float(t.loc[imax]), "Apogee", "#ef4444"))
+                events.append((float(t.loc[imax]), "Apogee", "#22C55E"))
         if not any(name == "Payload" for _, name, _ in events):
             alt_col, alt = _numeric_series(d, ["ALTITUDE", "ALT", "ALTITUDE_M"])
             if alt_col is not None and alt.notna().any():
@@ -1019,11 +1100,11 @@ def _event_markers_for_replay(df):
                 below = alt.loc[imax:][alt.loc[imax:] <= peak * 0.80]
                 if len(below):
                     ridx = below.index[0]
-                    events.append((float(t.loc[ridx]), "Payload", "#f97316"))
+                    events.append((float(t.loc[ridx]), "Payload", "#FB923C"))
         if not any(name == "Launch" for _, name, _ in events):
-            events.insert(0, (max(0.0, float(t.min(skipna=True))), "Launch", "#ef4444"))
+            events.insert(0, (max(0.0, float(t.min(skipna=True))), "Launch", "#F43F5E"))
         if not any(name == "Landing" for _, name, _ in events):
-            events.append((float(t.max(skipna=True)), "Landing", "#38d5ff"))
+            events.append((float(t.max(skipna=True)), "Landing", "#94A3B8"))
     except Exception:
         pass
     clean = []
@@ -1034,11 +1115,30 @@ def _event_markers_for_replay(df):
 
 
 def _v1256_stage_rects(full_df):
-    """Return exact V12.56 graph-engine state bands: state, start, end, color, alpha."""
+    """Return exact V12.56 graph-engine state bands: state, start, end, color, border, alpha."""
     rects = []
     for state, start, end in _v1256_stage_segments_for_replay(full_df):
-        rects.append((start, end, V1256_STATE_DISPLAY.get(state, state), V1256_STATE_COLORS.get(state, "#eeeeee"), V1256_STAGE_ALPHA))
+        rects.append((start, end, state, V1256_STATE_COLORS.get(state, "#eeeeee"), V1256_STATE_BORDERS.get(state, "#e5e7eb"), V1256_STAGE_ALPHA))
     return rects
+
+
+def _state_legend_strip_html(full_df) -> str:
+    """Compact state legend outside the plot area so text cannot overlap the graph."""
+    seen = []
+    for state, _start, _end in _v1256_stage_segments_for_replay(full_df):
+        if state not in seen:
+            seen.append(state)
+    if not seen:
+        seen = V1256_EXPECTED_STATES
+    parts = ['<div class="cfds-state-strip"><span class="cfds-state-strip-title">State colors</span>']
+    for state in seen:
+        color = V1256_STATE_COLORS.get(state, '#94A3B8')
+        border = V1256_STATE_BORDERS.get(state, '#EAFBFF')
+        short = V1256_STATE_SHORT_LABELS.get(state, state)
+        full = V1256_STATE_DISPLAY.get(state, state).replace('_', ' ')
+        parts.append(f'<span class="cfds-state-chip" title="{full}" style="border-color:{border};"><i class="cfds-state-dot" style="background:{color}; border-color:{border};"></i>{short}</span>')
+    parts.append('</div>')
+    return ''.join(parts)
 
 def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_time: float):
     import plotly.graph_objects as go
@@ -1048,14 +1148,20 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
     events = _event_markers_for_replay(full_df)
     t_min = float(full_df["__REPLAY_TIME_S"].min())
     t_max = float(full_df["__REPLAY_TIME_S"].max())
-    for x0, x1, name, color, alpha in _v1256_stage_rects(full_df):
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=alpha, line_width=0,
-                      annotation_text=name, annotation_position="top left",
-                      annotation_font_size=10, annotation_font_color="#DDEBFF")
+    for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
+        # Visible separation: each state band has a colored fill plus a brighter border.
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.12, min(float(alpha), 0.20)),
+                      line_width=2.1, line_color=border)
+        fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
+    # final boundary line
+    rects_tmp = _v1256_stage_rects(full_df)
+    if rects_tmp:
+        fig.add_vline(x=rects_tmp[-1][1], line_width=1.15, line_color=rects_tmp[-1][4], line_dash="solid", opacity=0.95)
     line_color = V1256_LINE_COLORS.get(graph_type, "#126FA3")
     fig.add_trace(go.Scatter(
         x=x, y=y, mode="lines", name=label,
         line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
+        showlegend=False,
         fill="tozeroy" if graph_type == "Altitude" else None,
         fillcolor="rgba(0,119,167,.08)" if graph_type == "Altitude" else None,
     ))
@@ -1063,6 +1169,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
         fig.add_trace(go.Scatter(
             x=[x.iloc[-1]], y=[y.iloc[-1]], mode="markers", name="Current point",
             marker=dict(size=11, color="#ef4444", line=dict(color="white", width=1.6)),
+            showlegend=False,
             hovertemplate="t=%{x:.1f}s<br>value=%{y:.3g}<extra></extra>",
         ))
     fig.add_vline(x=frame_time, line_width=2, line_color="#EAFBFF", line_dash="dash")
@@ -1072,111 +1179,142 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
         y_min -= 1; y_max += 1
     for tx, name, color in events:
         if tx <= frame_time + 1e-6:
-            fig.add_vline(x=tx, line_width=1, line_color=color, line_dash="dot")
-            fig.add_annotation(x=tx, y=y_max, text=name, showarrow=False, yanchor="bottom", font=dict(size=10, color="#EAFBFF"), bgcolor="rgba(7,24,39,.70)")
+            fig.add_vline(x=tx, line_width=1.3, line_color=color, line_dash="dot")
     fig.update_layout(
-        title=dict(text=f"{graph_type} Replay", x=0.02, y=0.96, font=dict(size=18, color="#38d5ff")),
-        height=430,
-        margin=dict(l=58, r=28, t=62, b=52),
+        title=None,
+        height=500,
+        margin=dict(l=62, r=24, t=44, b=48),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#071827",
+        plot_bgcolor="#0A1724",
         font=dict(color="#DDEBFF", size=12),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(7,24,39,.72)", bordercolor="rgba(56,213,255,.18)", borderwidth=1),
+        showlegend=False,
         hovermode="x unified",
     )
-    fig.update_xaxes(title_text="Mission time (s)", gridcolor="rgba(148,163,184,.18)", zeroline=False, linecolor="rgba(56,213,255,.35)", mirror=True)
-    fig.update_yaxes(title_text=label, gridcolor="rgba(148,163,184,.18)", zeroline=False, linecolor="rgba(56,213,255,.35)", mirror=True)
+    fig.update_xaxes(title_text="Mission time (s)", title_standoff=28, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+    fig.update_yaxes(title_text=label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
     return fig
 
 
 
 
 def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: str, trail_mode: str, frame_duration_ms: int = 40):
-    """Create browser-side Plotly animation so Play runs on iPhone without Streamlit rerun loops."""
+    """Create a light browser-side Plotly animation for iPhone.
+
+    Performance rule: keep the graph, state bands, labels, and full telemetry line static.
+    Animate only the current point and the time cursor. This avoids re-sending/re-drawing
+    a long trail line every frame, which was the main source of stutter on iPhone.
+    """
     import plotly.graph_objects as go
     import pandas as pd
+    import numpy as np
 
     if plot_df is None or plot_df.empty:
         return None
-    plot_df = plot_df.dropna().reset_index(drop=True)
+    plot_df = plot_df.dropna(subset=["Mission time (s)", label]).reset_index(drop=True)
     if plot_df.empty:
         return None
 
-    x_all = pd.to_numeric(plot_df["Mission time (s)"], errors="coerce").to_numpy()
-    y_all = pd.to_numeric(plot_df[label], errors="coerce").to_numpy()
-    valid = ~(pd.isna(x_all) | pd.isna(y_all))
+    x_all = pd.to_numeric(plot_df["Mission time (s)"], errors="coerce").to_numpy(dtype=float)
+    y_all = pd.to_numeric(plot_df[label], errors="coerce").to_numpy(dtype=float)
+    valid = ~(np.isnan(x_all) | np.isnan(y_all))
     x_all = x_all[valid]
     y_all = y_all[valid]
     if len(x_all) < 2:
         return None
 
-    y_min = float(pd.Series(y_all).min())
-    y_max = float(pd.Series(y_all).max())
+    y_min = float(np.nanmin(y_all))
+    y_max = float(np.nanmax(y_all))
     if y_min == y_max:
         y_min -= 1.0
         y_max += 1.0
     pad = (y_max - y_min) * 0.08
     y0, y1 = y_min - pad, y_max + pad
 
-    def window_arrays(idx: int):
-        idx = max(0, min(int(idx), len(x_all) - 1))
-        if trail_mode == "Full trail":
-            start = 0
-        else:
-            try:
-                seconds = float(trail_mode.split()[1])
-            except Exception:
-                seconds = 30.0
-            start = int(pd.Series(x_all).searchsorted(x_all[idx] - seconds, side="left"))
-        return x_all[start:idx + 1], y_all[start:idx + 1]
-
     line_color = V1256_LINE_COLORS.get(graph_type, "#126FA3")
 
-    xs0, ys0 = window_arrays(0)
-    fig = go.Figure(
-        data=[
-            go.Scatter(x=xs0, y=ys0, mode="lines", name=label,
-                       line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
-                       fill="tozeroy" if graph_type == "Altitude" else None,
-                       fillcolor="rgba(0,119,167,.08)" if graph_type == "Altitude" else None),
-            go.Scatter(x=[x_all[0]], y=[y_all[0]], mode="markers", name="Current point",
-                       marker=dict(size=12, color="#ef4444", line=dict(color="white", width=1.6))),
-            go.Scatter(x=[x_all[0], x_all[0]], y=[y0, y1], mode="lines", name="Time cursor",
-                       line=dict(color="#EAFBFF", width=2, dash="dash"), hoverinfo="skip"),
-        ]
-    )
+    # Static layer: state bands, full reference line, event markers.
+    fig = go.Figure()
+    stage_rects = _v1256_stage_rects(full_df)
+    for x0, x1, state, color, border, alpha in stage_rects:
+        # Keep state text out of the plot. Use border + boundary line for visibility.
+        fig.add_vrect(
+            x0=x0, x1=x1, fillcolor=color, opacity=max(0.12, min(float(alpha), 0.20)),
+            line_width=2.1, line_color=border
+        )
+        fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
+    if stage_rects:
+        fig.add_vline(x=stage_rects[-1][1], line_width=1.15, line_color=stage_rects[-1][4], line_dash="solid", opacity=0.95)
 
-    # Static V12.56-style stage bands and inferred event markers.
+    # Full line stays static. This keeps motion smooth; only point/cursor animate.
+    fig.add_trace(go.Scatter(
+        x=x_all,
+        y=y_all,
+        mode="lines",
+        name=label,
+        line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
+        showlegend=False,
+        fill="tozeroy" if graph_type == "Altitude" else None,
+        fillcolor="rgba(0,119,167,.07)" if graph_type == "Altitude" else None,
+        hovertemplate="t=%{x:.1f}s<br>value=%{y:.3g}<extra></extra>",
+    ))
+
+    # Optional visible-window trail: static faint band behind current point only if selected.
+    # It is intentionally not animated to prevent mobile stutter.
+    if trail_mode != "Full trail":
+        fig.add_trace(go.Scatter(
+            x=x_all,
+            y=y_all,
+            mode="lines",
+            name="Reference trail",
+            line=dict(color="rgba(234,251,255,.22)", width=1.5),
+            hoverinfo="skip",
+            showlegend=False,
+        ))
+
+    # Dynamic traces: current point + time cursor. These are the only traces updated per frame.
+    fig.add_trace(go.Scatter(
+        x=[x_all[0]],
+        y=[y_all[0]],
+        mode="markers",
+        name="Current point",
+        showlegend=False,
+        marker=dict(size=12, color="#ef4444", line=dict(color="white", width=1.6)),
+        hovertemplate="t=%{x:.1f}s<br>value=%{y:.3g}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=[x_all[0], x_all[0]],
+        y=[y0, y1],
+        mode="lines",
+        name="Time cursor",
+        showlegend=False,
+        line=dict(color="#EAFBFF", width=2, dash="dash"),
+        hoverinfo="skip",
+    ))
+
     events = _event_markers_for_replay(full_df)
-    t_min = float(full_df["__REPLAY_TIME_S"].min())
-    t_max = float(full_df["__REPLAY_TIME_S"].max())
-    for x0, x1, name, color, alpha in _v1256_stage_rects(full_df):
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=alpha, line_width=0,
-                      annotation_text=name, annotation_position="top left",
-                      annotation_font_size=10, annotation_font_color="#DDEBFF")
     for tx, name, color in events:
-        fig.add_vline(x=tx, line_width=1, line_color=color, line_dash="dot")
-        fig.add_annotation(x=tx, y=y1, text=name, showarrow=False, yanchor="bottom",
-                           font=dict(size=10, color="#EAFBFF"), bgcolor="rgba(7,24,39,.70)")
+        # Event names are shown in the Event Timeline chips under the graph.
+        # Keep only a thin vertical marker in the plot so labels cannot overlap.
+        fig.add_vline(x=tx, line_width=1.25, line_color=color, line_dash="dot", opacity=0.82)
 
     frames = []
-    # Keep frame count bounded by the already-downsampled replay_df length.
+    # Only update current point and cursor. Trace indices: static line=0, optional ref=1, current/cursor are last two.
+    current_trace_index = len(fig.data) - 2
+    cursor_trace_index = len(fig.data) - 1
     for i in range(len(x_all)):
-        xs, ys = window_arrays(i)
         frames.append(go.Frame(
             name=str(i),
             data=[
-                go.Scatter(x=xs, y=ys),
                 go.Scatter(x=[x_all[i]], y=[y_all[i]]),
                 go.Scatter(x=[x_all[i], x_all[i]], y=[y0, y1]),
             ],
-            traces=[0, 1, 2],
+            traces=[current_trace_index, cursor_trace_index],
         ))
     fig.frames = frames
 
+    # Sparse slider steps keep the JSON light while Play still uses all frames.
     steps = []
-    # Use sparse slider steps so the figure does not become too heavy on iPhone.
-    step_stride = max(1, len(x_all) // 20)
+    step_stride = max(1, len(x_all) // 18)
     for i in range(0, len(x_all), step_stride):
         steps.append(dict(
             method="animate",
@@ -1184,31 +1322,33 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
             label=f"{x_all[i]:.0f}s",
         ))
 
+    safe_frame_duration = int(max(20, min(1200, frame_duration_ms)))
     fig.update_layout(
-        title=dict(text=f"{graph_type} Replay", x=0.02, y=0.96, font=dict(size=18, color="#38d5ff")),
-        height=470,
-        margin=dict(l=58, r=28, t=66, b=72),
+        title=None,
+        height=600,
+        margin=dict(l=66, r=28, t=36, b=105),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#071827",
+        plot_bgcolor="#0A1724",
         font=dict(color="#DDEBFF", size=12),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(7,24,39,.72)", bordercolor="rgba(56,213,255,.18)", borderwidth=1),
+        showlegend=False,
         hovermode="x unified",
         yaxis=dict(range=[y0, y1]),
+        uirevision="cfds_replay_smooth_static_layers",
         updatemenus=[dict(
             type="buttons",
             direction="left",
-            x=0.01,
-            y=1.17,
+            x=0.012,
+            y=1.08,
             xanchor="left",
             yanchor="top",
             showactive=False,
-            bgcolor="rgba(7,24,39,.95)",
-            bordercolor="rgba(56,213,255,.42)",
+            bgcolor="rgba(7,24,39,.96)",
+            bordercolor="rgba(56,213,255,.48)",
             borderwidth=1,
             pad={"r": 8, "t": 4},
             buttons=[
                 dict(label="▶ Play", method="animate",
-                     args=[None, {"fromcurrent": True, "frame": {"duration": frame_duration_ms, "redraw": False}, "transition": {"duration": 0}, "mode": "immediate"}]),
+                     args=[None, {"fromcurrent": True, "frame": {"duration": safe_frame_duration, "redraw": False}, "transition": {"duration": 0}, "mode": "immediate"}]),
                 dict(label="⏸ Pause", method="animate",
                      args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}]),
             ],
@@ -1216,17 +1356,17 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
         sliders=[dict(
             active=0,
             x=0.02,
-            y=-0.13,
+            y=-0.070,
             len=0.94,
             xanchor="left",
             yanchor="top",
-            pad=dict(t=10, b=0),
-            currentvalue=dict(prefix="t = ", suffix="", font=dict(size=12, color="#DDEBFF")),
+            pad=dict(t=8, b=0),
+            currentvalue=dict(prefix="t = ", suffix=" s", font=dict(size=12, color="#DDEBFF")),
             steps=steps,
         )],
     )
-    fig.update_xaxes(title_text="Mission time (s)", gridcolor="rgba(148,163,184,.18)", zeroline=False, linecolor="rgba(56,213,255,.35)", mirror=True)
-    fig.update_yaxes(title_text=label, gridcolor="rgba(148,163,184,.18)", zeroline=False, linecolor="rgba(56,213,255,.35)", mirror=True)
+    fig.update_xaxes(title_text="Mission time (s)", title_standoff=28, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+    fig.update_yaxes(title_text=label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
     return fig
 
 def _state_at_time_for_replay(df, t_now: float) -> str:
@@ -1310,7 +1450,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         speed = st.radio("Speed", ["0.5x", "1x", "2x", "5x", "10x"], index=3 if mobile_fast else 2, horizontal=True, key="replay_speed")
         trail_mode = st.radio("Trail", ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"], index=0, horizontal=False, key="replay_trail")
         max_points = st.slider("Smoothness", min_value=120, max_value=900, value=max_points_default, step=20, help="More frames = smoother but heavier on iPhone.", key="replay_max_points")
-        st.markdown('<div class="cfds-mini-help">1x = real mission speed. 5x/10x are best for demo playback on iPhone.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cfds-mini-help">1x = real mission speed. 5x/10x are demo speeds. Animation timing uses mission duration ÷ frame count ÷ speed.</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         replay_engine = st.radio(
@@ -1352,7 +1492,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         st.markdown('</div>', unsafe_allow_html=True)
 
     with main:
-        st.markdown('<div class="cfds-graph-card"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3><span>State bands copied from normalized STATE</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="cfds-graph-card"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3><span>V12.56 state bands • live cursor • event timeline</span></div>', unsafe_allow_html=True)
 
         if replay_engine == "Smooth browser animation" and graph_type != "GPS path":
             plot_df, label = _replay_plot_data(replay_df, graph_type)
@@ -1371,7 +1511,15 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 theme=None,
                 config={"displayModeBar": False, "responsive": True, "scrollZoom": False},
             )
-            st.markdown('<div class="cfds-mini-help">Use the embedded ▶ Play / ⏸ Pause inside the chart. Plotly animation runs in the browser, so it avoids Streamlit rerun loops.</div>', unsafe_allow_html=True)
+            # State legend is outside the plot so labels never collide with graph titles or axes.
+            st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
+            # Fill the lower workspace with event/status chips instead of leaving an empty dark block.
+            chips = []
+            for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+                chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
+            if chips:
+                st.markdown('<div class="cfds-event-strip">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
+            st.markdown('<div class="cfds-replay-tipbar">Use the embedded ▶ Play / ⏸ Pause inside the chart. Event names stay below the graph to avoid overlap on iPhone; vertical lines mark event time.</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
             return
@@ -1438,6 +1586,12 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 else:
                     fig = _make_v1256_replay_fig(plot_df, label, replay_df, graph_type, t_now)
                     chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False, "responsive": True})
+        st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
+        chips = []
+        for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+            chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
+        if chips:
+            st.markdown('<div class="cfds-event-strip">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
