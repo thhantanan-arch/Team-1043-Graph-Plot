@@ -1976,6 +1976,65 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
         fig.update_yaxes(title_text="Descent rate (m/s)")
     return fig
 
+
+
+def _inject_state_jump_buttons(fig, full_df, frame_duration_ms: int = 40):
+    """Add compact Plotly jump controls to the chart itself.
+
+    The HTML action deck above the graph is visual. This function makes the Plotly
+    chart functional by adding jump-to-event buttons that animate to the nearest
+    frame for Launch/Apogee/Payload/Landing. It works with any animation whose
+    frames store the current point x in frame.data[0].x[0].
+    """
+    try:
+        if fig is None or not getattr(fig, "frames", None):
+            return fig
+        frame_times = []
+        for fr in fig.frames:
+            try:
+                frame_times.append(float(fr.data[0].x[0]))
+            except Exception:
+                frame_times.append(None)
+        if not frame_times:
+            return fig
+        finite_times = [(i, t) for i, t in enumerate(frame_times) if t is not None]
+        if not finite_times:
+            return fig
+        buttons = []
+        labels_seen = set()
+        for tx, name, _color in _event_markers_for_replay(full_df)[:6]:
+            short = str(name).replace("_", " ").title()
+            if short in labels_seen:
+                continue
+            labels_seen.add(short)
+            idx, _ = min(finite_times, key=lambda it: abs(it[1] - float(tx)))
+            buttons.append(dict(
+                label=f"↦ {short}",
+                method="animate",
+                args=[[str(idx)], {"mode":"immediate", "frame":{"duration":0, "redraw":False}, "transition":{"duration":0}}],
+            ))
+        if not buttons:
+            return fig
+        menus = list(fig.layout.updatemenus) if fig.layout.updatemenus else []
+        menus.append(dict(
+            type="buttons",
+            direction="right",
+            x=0.19,
+            y=1.085,
+            xanchor="left",
+            yanchor="top",
+            showactive=False,
+            bgcolor="rgba(7,24,39,.96)",
+            bordercolor="rgba(56,213,255,.42)",
+            borderwidth=1,
+            pad={"r": 8, "t": 4},
+            buttons=buttons,
+        ))
+        fig.update_layout(updatemenus=menus, margin=dict(l=66, r=28, t=62, b=105))
+        return fig
+    except Exception:
+        return fig
+
 def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     '''Wide V12.56 replay dashboard: graph first, controls above/below, no left rail.'''
     st.markdown('<a id="replay"></a><div class="cfds-replay-shell cfds-replay-wide-shell">', unsafe_allow_html=True)
@@ -2092,7 +2151,27 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    st.markdown('<div class="cfds-graph-titlebar cfds-graph-titlebar-only"><h3>'+graph_type+' vs Time</h3></div>', unsafe_allow_html=True)
+    # Filled replay action deck: this replaces the old empty title bar above the graph.
+    event_buttons = []
+    try:
+        for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+            event_buttons.append(f'<span class="cfds-skip-chip"><b>{name}</b><em>{tx:.1f}s</em></span>')
+    except Exception:
+        event_buttons = []
+    st.markdown(f'''
+        <div class="cfds-replay-action-deck">
+          <div class="cfds-replay-action-left">
+            <div class="cfds-action-title">{graph_type.upper()}</div>
+            <div class="cfds-action-sub">browser replay controls • state jump markers • reset view in Plotly modebar</div>
+          </div>
+          <div class="cfds-replay-action-buttons">
+            <span class="cfds-play-chip">▶ Play</span>
+            <span class="cfds-play-chip">⏸ Pause</span>
+            <span class="cfds-play-chip">⌂ Reset view</span>
+          </div>
+          <div class="cfds-replay-skip-row">{''.join(event_buttons)}</div>
+        </div>
+        ''', unsafe_allow_html=True)
 
     if replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
         fig = None
@@ -2127,6 +2206,10 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             st.info("Not enough data to create this replay. Try another graph or Manual scrub fallback.")
             return
         fig.update_layout(dragmode="pan")
+        try:
+            _inject_state_jump_buttons(fig, replay_df, frame_duration)
+        except Exception:
+            pass
         st.plotly_chart(
             fig,
             use_container_width=True,
@@ -3602,3 +3685,38 @@ st.markdown(
 CLEAN_REBUILD_POLICY_NOTE = "Clean rebuild layer: no white controls, no open HTML wrappers, AAS 2026 descent bands, CONOPS accuracy, GPS XY/XYZ, split motion, metric cards."
 
 # FINAL_VISIBILITY_POLICY_NOTE = "No white controls, no empty cards, AAS 2026 bands 12-18 and 2-8, CONOPS planned-vs-actual accuracy, XYZ min/max/range cards."
+
+
+# --- Replay action deck fill fix: no blank top bar above Plotly ---
+st.markdown("""
+<style>
+  .cfds-replay-action-deck {
+    border:1px solid rgba(56,213,255,.33);
+    background:linear-gradient(180deg, rgba(7,24,39,.96), rgba(5,18,31,.96));
+    border-radius:16px;
+    padding:14px 16px 12px 16px;
+    margin:.65rem 0 .75rem 0;
+    box-shadow:0 0 0 1px rgba(56,213,255,.06) inset;
+  }
+  .cfds-replay-action-left { display:flex; align-items:baseline; gap:.8rem; flex-wrap:wrap; }
+  .cfds-action-title { color:#EAFBFF; font-size:1.05rem; font-weight:900; letter-spacing:.08em; }
+  .cfds-action-sub { color:#9DB7C9; font-size:.78rem; }
+  .cfds-replay-action-buttons { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.65rem; }
+  .cfds-play-chip, .cfds-skip-chip {
+    display:inline-flex; align-items:center; justify-content:center; gap:.35rem;
+    min-height:34px; padding:0 13px; border-radius:999px;
+    background:#0E2B45; border:1px solid rgba(56,213,255,.55);
+    color:#EAFBFF; font-weight:800; font-size:.82rem; white-space:nowrap;
+  }
+  .cfds-replay-skip-row { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.55rem; }
+  .cfds-skip-chip { border-color:rgba(148,163,184,.28); background:#071827; }
+  .cfds-skip-chip b { font-size:.70rem; color:#9DB7C9; letter-spacing:.05em; }
+  .cfds-skip-chip em { font-style:normal; color:#EAFBFF; font-size:.78rem; }
+  .cfds-graph-titlebar-only { display:none !important; min-height:0 !important; padding:0 !important; margin:0 !important; }
+  @media (max-width: 760px) {
+    .cfds-replay-action-deck { padding:12px; }
+    .cfds-play-chip, .cfds-skip-chip { flex:1 1 42%; min-height:38px; }
+    .cfds-action-title { font-size:.95rem; }
+  }
+</style>
+""", unsafe_allow_html=True)
