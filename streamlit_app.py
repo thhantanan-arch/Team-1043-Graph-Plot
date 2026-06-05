@@ -2153,11 +2153,26 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
 
     # Filled replay action deck: this replaces the old empty title bar above the graph.
     event_buttons = []
+    rail_dots = []
+    rail_labels = []
+    rail_start = 0.0
+    rail_end = float(replay_end) if np.isfinite(replay_end) else 1.0
     try:
-        for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+        _markers = _event_markers_for_replay(replay_df)[:6]
+        if _markers:
+            rail_start = float(min(tx for tx, _name, _color in _markers))
+            rail_end = float(max(tx for tx, _name, _color in _markers))
+        rail_span = max(1e-9, rail_end - rail_start)
+        for tx, name, _color in _markers:
+            p = max(0.0, min(100.0, ((float(tx) - rail_start) / rail_span) * 100.0))
             event_buttons.append(f'<span class="cfds-skip-chip"><b>{name}</b><em>{tx:.1f}s</em></span>')
+            rail_dots.append(f'<span class="cfds-rail-dot" style="left:{p:.2f}%"></span>')
+            rail_labels.append(f'<span class="cfds-rail-label" style="left:{p:.2f}%"><b>{name}</b><em>{tx:.1f}s</em></span>')
     except Exception:
         event_buttons = []
+        rail_dots = []
+        rail_labels = []
+    rail_now_pct = max(0.0, min(100.0, ((float(t_preview) - rail_start) / max(1e-9, rail_end - rail_start)) * 100.0))
     right_state = state_preview
     right_next = next_event
     try:
@@ -2186,11 +2201,25 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
               <b>{right_state}</b>
               <em>t = {t_preview:.1f}s • alt = {alt_text}</em>
             </div>
-            <div class="cfds-live-card">
+            <div class="cfds-live-card cfds-live-card-purple">
               <span>NEXT EVENT</span>
               <b>{right_next}</b>
               <em>jump chips stay on the left</em>
             </div>
+            <div class="cfds-live-card cfds-live-card-green">
+              <span>WINDOW STATUS</span>
+              <b>{butter_mode}</b>
+              <em>{len(replay_df)} frames • {frame_duration} ms</em>
+            </div>
+          </div>
+          <div class="cfds-mission-rail">
+            <div class="cfds-rail-head"><span>MISSION RAIL</span><b>{t_preview:.1f}s / {rail_end:.1f}s</b></div>
+            <div class="cfds-rail-track">
+              <span class="cfds-rail-fill" style="width:{rail_now_pct:.2f}%"></span>
+              {''.join(rail_dots)}
+              <span class="cfds-rail-now" style="left:{rail_now_pct:.2f}%"></span>
+            </div>
+            <div class="cfds-rail-labels">{''.join(rail_labels)}</div>
           </div>
         </div>
         ''', unsafe_allow_html=True)
@@ -3763,15 +3792,65 @@ st.markdown("""
   .cfds-skip-chip b { font-size:.70rem; color:#9DB7C9; letter-spacing:.05em; }
   .cfds-skip-chip em { font-style:normal; color:#EAFBFF; font-size:.78rem; }
   .cfds-graph-titlebar-only { display:none !important; min-height:0 !important; padding:0 !important; margin:0 !important; }
-  @media (max-width: 760px) {
-    .cfds-replay-action-deck { padding:12px; }
-    .cfds-action-deck-pair { grid-template-columns:1fr; }
-    .cfds-replay-action-side { grid-template-columns:1fr 1fr; }
-    .cfds-play-chip, .cfds-skip-chip { flex:1 1 42%; min-height:38px; }
-    .cfds-action-title { font-size:.95rem; }
+  .cfds-live-card-purple { border-color:rgba(168,85,247,.58); }
+  .cfds-live-card-green { border-color:rgba(34,197,94,.58); }
+  .cfds-live-card-purple em { color:#A855F7; }
+  .cfds-live-card-green em { color:#22C55E; }
+  .cfds-mission-rail {
+    grid-column:1 / -1;
+    margin-top:.68rem;
+    padding:.62rem .72rem .42rem .72rem;
+    border:1px solid rgba(56,213,255,.22);
+    background:rgba(7,24,39,.62);
+    border-radius:14px;
   }
-  @media (max-width: 430px) {
-    .cfds-replay-action-side { grid-template-columns:1fr; }
+  .cfds-rail-head { display:flex; justify-content:space-between; color:#9DB7C9; font-size:.64rem; font-weight:900; letter-spacing:.10em; }
+  .cfds-rail-head b { color:#EAFBFF; font-size:.64rem; }
+  .cfds-rail-track { position:relative; height:8px; margin-top:.5rem; border-radius:999px; background:#29485A; overflow:visible; }
+  .cfds-rail-fill { position:absolute; left:0; top:0; height:8px; border-radius:999px; background:linear-gradient(90deg,#38D5FF,#22C55E); box-shadow:0 0 10px rgba(56,213,255,.22); }
+  .cfds-rail-dot { position:absolute; top:50%; transform:translate(-50%,-50%); width:11px; height:11px; border-radius:50%; background:#EAFBFF; border:2px solid #050B12; z-index:3; }
+  .cfds-rail-now { position:absolute; top:-6px; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:12px solid #EF4444; z-index:4; }
+  .cfds-rail-labels { position:relative; height:28px; margin-top:.45rem; }
+  .cfds-rail-label { position:absolute; transform:translateX(-50%); min-width:72px; text-align:center; color:#9DB7C9; font-size:.58rem; line-height:1.05; }
+  .cfds-rail-label b { display:block; color:#EAFBFF; font-size:.58rem; }
+  .cfds-rail-label em { display:block; color:#9DB7C9; font-style:normal; font-size:.56rem; margin-top:1px; }
+  @media (max-width: 760px) {
+    .cfds-wide-status-strip,
+    .cfds-event-strip-wide,
+    .cfds-replay-tipbar { display:none !important; }
+    .cfds-replay-action-deck { padding:10px !important; margin:.35rem 0 .55rem 0 !important; border-radius:14px !important; }
+    .cfds-action-deck-pair { grid-template-columns:1fr !important; gap:.55rem !important; }
+    .cfds-replay-action-left { display:block !important; }
+    .cfds-action-sub { display:none !important; }
+    .cfds-action-title { font-size:.92rem !important; }
+    .cfds-replay-action-buttons,
+    .cfds-replay-skip-row {
+      flex-wrap:nowrap !important;
+      overflow-x:auto !important;
+      overflow-y:hidden !important;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:none;
+      padding-bottom:2px;
+    }
+    .cfds-replay-action-buttons::-webkit-scrollbar,
+    .cfds-replay-skip-row::-webkit-scrollbar { display:none; }
+    .cfds-play-chip, .cfds-skip-chip {
+      flex:0 0 auto !important;
+      min-width:92px !important;
+      min-height:34px !important;
+      padding:0 11px !important;
+      font-size:.72rem !important;
+    }
+    .cfds-replay-action-side { grid-template-columns:1fr !important; gap:.45rem !important; }
+    .cfds-live-card { min-height:48px !important; padding:9px 11px !important; border-radius:13px !important; }
+    .cfds-live-card span { font-size:.58rem !important; }
+    .cfds-live-card b { font-size:.84rem !important; margin-top:2px !important; }
+    .cfds-live-card em { font-size:.66rem !important; margin-top:2px !important; }
+    .cfds-mission-rail { padding:.5rem .55rem .25rem .55rem !important; margin-top:.45rem !important; }
+    .cfds-rail-labels { display:none !important; }
+    .cfds-rail-head { font-size:.56rem !important; }
+    .stPlotlyChart { width:100% !important; overflow-x:auto !important; }
+    .js-plotly-plot, .plot-container, .svg-container { min-width:100% !important; }
   }
 </style>
 """, unsafe_allow_html=True)
