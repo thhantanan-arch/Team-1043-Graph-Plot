@@ -2314,6 +2314,106 @@ def render_family_selector(preset_name: str) -> list[str]:
             selected.append(key)
     return selected
 
+
+
+def render_scientific_calculator() -> None:
+    """Dark scientific calculator component for mission math.
+
+    This is intentionally client-side so it never forces Streamlit reruns while typing.
+    The expression evaluator only allows numbers/operators and a small Math function map.
+    """
+    components.html(
+        r"""
+        <div class="cfds-sci-calc">
+          <div class="calc-topline">
+            <div>
+              <div class="calc-kicker">MISSION SCIENTIFIC CALCULATOR</div>
+              <div class="calc-sub">Quick checks: 681×0.8, descent rate, trig, sqrt, log, powers</div>
+            </div>
+            <div class="calc-status">SAFE LOCAL EVAL</div>
+          </div>
+          <div class="calc-display-wrap">
+            <input id="cfdsCalcDisplay" class="calc-display" value="681*0.8" autocomplete="off" spellcheck="false" />
+            <div id="cfdsCalcResult" class="calc-result">= 544.8</div>
+          </div>
+          <div class="calc-grid">
+            <button data-act="clear" class="danger">AC</button><button data-act="back">⌫</button><button data-in="(">(</button><button data-in=")">)</button><button data-in="/">÷</button>
+            <button data-fn="sin">sin</button><button data-fn="cos">cos</button><button data-fn="tan">tan</button><button data-fn="sqrt">√</button><button data-in="*">×</button>
+            <button data-fn="log10">log</button><button data-fn="ln">ln</button><button data-in="^">xʸ</button><button data-in="pi">π</button><button data-in="-">−</button>
+            <button data-in="7">7</button><button data-in="8">8</button><button data-in="9">9</button><button data-in="e">e</button><button data-in="+">+</button>
+            <button data-in="4">4</button><button data-in="5">5</button><button data-in="6">6</button><button data-act="ans">ANS</button><button data-act="eval" class="equals">=</button>
+            <button data-in="1">1</button><button data-in="2">2</button><button data-in="3">3</button><button data-in=".">.</button><button data-in="0">0</button>
+          </div>
+          <div class="calc-formulas">
+            <button data-template="681*0.8">80% apogee</button>
+            <button data-template="(850.8-497.1)/(43.1-12.7)">descent rate</button>
+            <button data-template="sqrt(2*9.81*10)">impact speed</button>
+            <button data-template="(733.4-432)/15">stage time</button>
+          </div>
+        </div>
+        <style>
+          :root { color-scheme: dark; }
+          html, body { margin:0; background:#050B12; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; }
+          .cfds-sci-calc { box-sizing:border-box; width:100%; border:1px solid rgba(56,213,255,.34); border-radius:18px; background:linear-gradient(180deg,#071827,#050B12); padding:16px; color:#EAFBFF; box-shadow:0 0 24px rgba(56,213,255,.08), inset 0 1px 0 rgba(255,255,255,.05); }
+          .calc-topline { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:14px; }
+          .calc-kicker { color:#38D5FF; letter-spacing:.16em; font-size:12px; font-weight:900; }
+          .calc-sub { color:#9DB7C9; font-size:12px; margin-top:4px; }
+          .calc-status { border:1px solid rgba(56,213,255,.35); border-radius:999px; padding:7px 10px; font-size:11px; font-weight:800; color:#BFF6FF; background:#0B2136; white-space:nowrap; }
+          .calc-display-wrap { border:1px solid rgba(56,213,255,.42); background:#06111F; border-radius:14px; padding:12px; margin-bottom:12px; }
+          .calc-display { width:100%; box-sizing:border-box; border:0; outline:0; background:#06111F; color:#EAFBFF; font-size:26px; font-weight:850; letter-spacing:.04em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+          .calc-result { margin-top:8px; color:#38D5FF; font-size:20px; font-weight:900; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-height:26px; }
+          .calc-grid { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:8px; }
+          .calc-grid button, .calc-formulas button { border:1px solid rgba(56,213,255,.25); color:#EAFBFF; background:#0E2B45; border-radius:12px; min-height:44px; font-weight:900; font-size:15px; box-shadow:inset 0 1px 0 rgba(255,255,255,.04); }
+          .calc-grid button:hover, .calc-formulas button:hover { border-color:#38D5FF; background:#123B60; }
+          .calc-grid .equals { grid-row: span 2; min-height:96px; background:linear-gradient(180deg,#0B84FF,#005FB8); }
+          .calc-grid .danger { background:linear-gradient(180deg,#FF4B55,#991B1B); }
+          .calc-formulas { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:8px; margin-top:12px; }
+          .calc-formulas button { min-height:36px; font-size:12px; color:#BFF6FF; }
+          @media (max-width: 650px) { .calc-grid { gap:6px; } .calc-grid button { min-height:42px; } .calc-formulas { grid-template-columns:1fr 1fr; } .calc-status { display:none; } .calc-display { font-size:22px; } }
+        </style>
+        <script>
+          const display = document.getElementById('cfdsCalcDisplay');
+          const result = document.getElementById('cfdsCalcResult');
+          let lastAns = 0;
+          function insert(txt){ const a=display.selectionStart ?? display.value.length; const b=display.selectionEnd ?? display.value.length; display.value = display.value.slice(0,a)+txt+display.value.slice(b); display.focus(); display.selectionStart=display.selectionEnd=a+txt.length; quickEval(); }
+          function normalize(expr){
+            return expr.replaceAll('×','*').replaceAll('÷','/').replaceAll('−','-').replaceAll('π','pi')
+              .replace(/\bpi\b/g,'Math.PI').replace(/\be\b/g,'Math.E')
+              .replace(/\bsqrt\s*\(/g,'Math.sqrt(').replace(/\bsin\s*\(/g,'Math.sin(').replace(/\bcos\s*\(/g,'Math.cos(').replace(/\btan\s*\(/g,'Math.tan(')
+              .replace(/\blog10\s*\(/g,'Math.log10(').replace(/\bln\s*\(/g,'Math.log(').replace(/\blog\s*\(/g,'Math.log10(')
+              .replace(/\^/g,'**');
+          }
+          function safeEval(){
+            let expr = display.value.trim();
+            if(!expr){ result.textContent=''; return null; }
+            expr = expr.replace(/ANS/g, String(lastAns));
+            const norm = normalize(expr);
+            if(!/^[0-9+\-*/().,\sA-Za-z_]*$/.test(norm)) throw new Error('blocked token');
+            if(/(constructor|window|document|globalThis|Function|eval|import|fetch|XMLHttpRequest)/i.test(norm)) throw new Error('blocked name');
+            const val = Function('"use strict"; return (' + norm + ')')();
+            if(typeof val !== 'number' || !Number.isFinite(val)) throw new Error('not finite');
+            lastAns = val;
+            return val;
+          }
+          function quickEval(){ try { const v=safeEval(); if(v!==null) result.textContent='= '+Number(v.toPrecision(12)); } catch(e){ result.textContent='check expression'; } }
+          document.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => {
+            if(btn.dataset.in) insert(btn.dataset.in);
+            if(btn.dataset.fn) insert(btn.dataset.fn + '(');
+            if(btn.dataset.template){ display.value=btn.dataset.template; quickEval(); }
+            if(btn.dataset.act==='clear'){ display.value=''; result.textContent=''; display.focus(); }
+            if(btn.dataset.act==='back'){ display.value=display.value.slice(0,-1); quickEval(); }
+            if(btn.dataset.act==='ans') insert('ANS');
+            if(btn.dataset.act==='eval') quickEval();
+          }));
+          display.addEventListener('input', quickEval);
+          display.addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); quickEval(); }});
+          quickEval();
+        </script>
+        """,
+        height=520,
+        scrolling=False,
+    )
+
 if "cfds_last_export" not in st.session_state:
     st.session_state["cfds_last_export"] = None
 if "cfds_export_cache" not in st.session_state:
@@ -2408,14 +2508,25 @@ if _mascot_path.exists():
             st.markdown("**Elfaria Albis Serfort** — Daedalus CFDS assistant mascot.")
             st.caption("Used only as a lightweight app identity panel so it does not slow down graph replay.")
 
-st.markdown('<div class="cfds-panel"><div class="cfds-panel-title">Mission input</div>', unsafe_allow_html=True)
+# Mission input and generation command use real Streamlit layout, not open HTML wrappers.
+# Open raw <div> wrappers around widgets caused empty dark boxes and inconsistent white file chips.
+st.markdown('<a id="import"></a><div class="cfds-section-banner">MISSION INPUT</div>', unsafe_allow_html=True)
 uploaded = None
 if not use_demo:
-    uploaded = st.file_uploader("Upload flight log", type=SUPPORTED_TYPES)
+    uploaded = st.file_uploader("Upload flight log", type=SUPPORTED_TYPES, key="cfds_log_uploader")
+    if uploaded is not None:
+        try:
+            _up_size_mb = uploaded.size / (1024*1024)
+            st.markdown(
+                f'<div class="cfds-uploaded-chip"><span class="cfds-upload-icon">▣</span>'
+                f'<div><b>{safe_filename(uploaded.name)}</b><small>{_up_size_mb:.2f} MB • ready</small></div></div>',
+                unsafe_allow_html=True,
+            )
+        except Exception:
+            pass
 
-st.markdown('</div><a id="generate"></a><div class="cfds-panel"><div class="cfds-panel-title">Generation command</div>', unsafe_allow_html=True)
+st.markdown('<a id="generate"></a><div class="cfds-section-banner">GENERATION COMMAND</div>', unsafe_allow_html=True)
 start = st.button("Generate selected graphs", type="primary", use_container_width=True)
-st.markdown('</div>', unsafe_allow_html=True)
 
 if start:
     with tempfile.TemporaryDirectory(prefix="cfds_web_") as tmp:
@@ -2480,21 +2591,9 @@ if st.session_state.get("cfds_last_export") is not None:
 
 
 
-# Utility deck: quick calculator for mission math without leaving the web app.
-with st.expander("🧮 Mission calculator", expanded=False):
-    st.caption("Safe calculator for quick engineering checks. Examples: 681*0.8, (733.4-432)/15, sqrt(2*9.81*10).")
-    expr = st.text_input("Expression", value="681*0.8", key="cfds_calc_expr")
-    allowed_names = {
-        "sqrt": __import__("math").sqrt, "sin": __import__("math").sin, "cos": __import__("math").cos,
-        "tan": __import__("math").tan, "log": __import__("math").log, "log10": __import__("math").log10,
-        "pi": __import__("math").pi, "e": __import__("math").e, "abs": abs, "round": round,
-        "min": min, "max": max, "pow": pow,
-    }
-    try:
-        result = eval(expr, {"__builtins__": {}}, allowed_names)
-        st.success(f"= {result}")
-    except Exception as exc:
-        st.info(f"Enter a valid expression. ({exc})")
+# Utility deck: full scientific calculator for mission math without leaving the web app.
+with st.expander("🧮 Mission scientific calculator", expanded=False):
+    render_scientific_calculator()
 
 st.divider()
 st.caption("CFDS Web keeps the original graph engine, but uses a mobile-optimized browser interface for iPhone/iPad/desktop.")
@@ -3384,6 +3483,116 @@ st.markdown(
         .cfds-state-strip { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
         .cfds-event-strip-wide { grid-template-columns: 1fr 1fr !important; }
         [data-testid="stFileUploaderFile"] { max-width: 100% !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
+# --- CFDS DEEP FIX FINAL POLICY: no white uploader chips, no blank wrappers, scientific calculator skin ---
+st.markdown(
+    """
+    <style>
+    /* Self-contained section headings replace raw open cfds-panel wrappers, preventing empty boxes. */
+    .cfds-section-banner {
+        border: 1px solid rgba(56,213,255,.32) !important;
+        background: linear-gradient(180deg, rgba(7,24,39,.94), rgba(5,11,18,.90)) !important;
+        border-radius: 14px !important;
+        padding: .72rem .95rem !important;
+        margin: .85rem 0 .55rem 0 !important;
+        color: #38D5FF !important;
+        font-weight: 900 !important;
+        letter-spacing: .16em !important;
+        font-size: .86rem !important;
+        text-transform: uppercase !important;
+        min-height: auto !important;
+    }
+
+    /* Uploaded file: hide Streamlit's native white chip and show our own dark chip below it. */
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFile"],
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] *,
+    div[data-testid="stFileUploader"] section + div,
+    div[data-testid="stFileUploader"] section + div * {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        max-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: 0 !important;
+        overflow: hidden !important;
+    }
+    .cfds-uploaded-chip {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: .72rem !important;
+        margin: .45rem 0 .15rem 0 !important;
+        padding: .64rem .78rem !important;
+        border-radius: 14px !important;
+        border: 1px solid rgba(56,213,255,.55) !important;
+        background: #0E2B45 !important;
+        color: #EAFBFF !important;
+        max-width: min(100%, 430px) !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 14px rgba(56,213,255,.08) !important;
+    }
+    .cfds-uploaded-chip b { display:block !important; color:#EAFBFF !important; font-weight:900 !important; max-width:310px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .cfds-uploaded-chip small { display:block !important; color:#9DB7C9 !important; font-size:.74rem !important; margin-top:.08rem !important; }
+    .cfds-upload-icon { width:2.05rem; height:2.05rem; border-radius:10px; background:#071827; border:1px solid rgba(56,213,255,.5); display:grid; place-items:center; color:#38D5FF !important; font-weight:900; }
+
+    /* Absolute no-white controls, including report inline-code pills like Source log. */
+    code, pre, kbd, samp,
+    [data-testid="stCodeBlock"], [data-testid="stCodeBlock"] *,
+    [data-testid="stFileUploader"], [data-testid="stFileUploader"] *,
+    [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea,
+    [data-baseweb="input"] input, [data-baseweb="textarea"] textarea,
+    [data-baseweb="select"] > div, [data-baseweb="select"] div {
+        background-color: #0B2136 !important;
+        color: #EAFBFF !important;
+        -webkit-text-fill-color: #EAFBFF !important;
+        border-color: rgba(56,213,255,.52) !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stFileUploader"] button, [data-testid="stFileUploader"] button * {
+        background: linear-gradient(180deg, #0B84FF, #005FB8) !important;
+        color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+    }
+
+    /* Checkbox/radio white squares were visually loud; keep controls dark while selected state stays obvious. */
+    [data-testid="stCheckbox"] span[data-baseweb="checkbox"] > div,
+    [data-testid="stRadio"] span[data-baseweb="radio"] > div,
+    input[type="checkbox"], input[type="radio"] {
+        background-color: #0E2B45 !important;
+        border-color: rgba(234,251,255,.82) !important;
+        color: #38D5FF !important;
+        accent-color: #FF4B55 !important;
+    }
+
+    /* Remove blank decorative panels that may remain from earlier HTML wrapper patches. */
+    .cfds-panel:empty, .cfds-card:empty, .cfds-graph-card:empty,
+    .cfds-panel:not(:has(*:not(style):not(script))) {
+        display: none !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: 0 !important;
+    }
+
+    /* Calculator expander should look like an instrument panel, not a default Streamlit card. */
+    [data-testid="stExpander"]:has(iframe) {
+        background: #071827 !important;
+        border: 1px solid rgba(56,213,255,.34) !important;
+        border-radius: 18px !important;
+        overflow: hidden !important;
+    }
+    [data-testid="stExpander"]:has(iframe) summary {
+        background: #0B2136 !important;
+        color: #EAFBFF !important;
+        font-weight: 900 !important;
     }
     </style>
     """,
