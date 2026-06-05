@@ -1506,8 +1506,8 @@ def _next_event_for_replay(df, t_now: float) -> str:
 
 
 def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
-    """V12.56-adapted dashboard replay: control deck + graph workspace."""
-    st.markdown('<a id="replay"></a><div class="cfds-replay-shell">', unsafe_allow_html=True)
+    '''Wide V12.56 replay dashboard: graph first, controls above/below, no left rail.'''
+    st.markdown('<a id="replay"></a><div class="cfds-replay-shell cfds-replay-wide-shell">', unsafe_allow_html=True)
 
     df, err = _replay_dataframe_from_payload(payload)
     if err:
@@ -1526,11 +1526,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     rate_text = "5 Hz" if "PACKET_COUNT" in df.columns else "log"
 
     st.markdown(f'''
-        <div class="cfds-replay-head">
+        <div class="cfds-replay-head cfds-replay-wide-head">
           <div>
             <div class="cfds-replay-kicker">Replay deck</div>
             <div class="cfds-replay-title">Flight Replay</div>
-            <div class="cfds-replay-sub">V12.56 graph-state format • browser-side Plotly playback • iPhone control deck</div>
+            <div class="cfds-replay-sub">Wide graph mode • V12.56 state bands • modebar reset-view enabled</div>
           </div>
           <div class="cfds-replay-badges">
             <div class="cfds-badge"><b>WINDOW</b> {replay_start:.1f} → {replay_end:.1f} s</div>
@@ -1540,35 +1540,37 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    left, main = st.columns([0.95, 3.15], gap="medium")
+    graph_options = ["Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current", "GPS altitude", "Motion magnitude", "GPS path"]
+    speed_options = ["0.5x", "1x", "2x", "5x", "10x"]
+    trail_options = ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"]
 
-    with left:
-        st.markdown('<div class="cfds-control-block"><div class="cfds-control-title">Replay graph</div>', unsafe_allow_html=True)
-        graph_type = st.radio(
-            "Replay graph",
-            ["Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current", "GPS altitude", "Motion magnitude", "GPS path"],
-            index=0,
-            horizontal=False,
-            key="replay_graph_type",
-            label_visibility="collapsed",
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="cfds-control-block"><div class="cfds-control-title">Playback</div>', unsafe_allow_html=True)
-        speed = st.radio("Speed", ["0.5x", "1x", "2x", "5x", "10x"], index=3 if mobile_fast else 2, horizontal=True, key="replay_speed")
-        trail_mode = st.radio("Trail", ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"], index=0, horizontal=False, key="replay_trail")
-        max_points = st.slider("Smoothness", min_value=120, max_value=900, value=max_points_default, step=20, help="More frames = smoother but heavier on iPhone.", key="replay_max_points")
-        st.markdown('<div class="cfds-mini-help">1x = real mission speed. 5x/10x are demo speeds. Animation timing uses mission duration ÷ frame count ÷ speed.</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="cfds-wide-controls"><div class="cfds-wide-controls-title">Replay settings</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([1.7, 1.35, 1.55, 1.55], gap="medium")
+    with c1:
+        graph_type = st.selectbox("Replay graph", graph_options, index=0, key="replay_graph_type_wide")
+    with c2:
+        speed = st.radio("Speed", speed_options, index=3 if mobile_fast else 2, horizontal=True, key="replay_speed_wide")
+    with c3:
+        trail_mode = st.radio("Trail", trail_options, index=0, horizontal=True, key="replay_trail_wide")
+    with c4:
         replay_engine = st.radio(
             "Replay engine",
             ["Smooth browser animation", "Manual scrub fallback"],
             index=0,
             horizontal=False,
-            key="replay_engine_mode",
+            key="replay_engine_mode_wide",
             help="Smooth mode uses Plotly animation controls inside the chart, not Streamlit button loops.",
         )
+    max_points = st.slider(
+        "Smoothness / animation frames",
+        min_value=120,
+        max_value=900,
+        value=max_points_default,
+        step=20,
+        help="More frames = smoother but heavier on iPhone.",
+        key="replay_max_points_wide",
+    )
+    st.markdown('<div class="cfds-mini-help cfds-wide-help">1x = real mission speed. 5x/10x are demo speeds. Use the Plotly modebar reset-axes button to reset view after zoom/pan.</div></div>', unsafe_allow_html=True)
 
     replay_df = _downsample_for_replay(df, max_points)
     if replay_df.empty:
@@ -1587,120 +1589,127 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     state_preview = _state_at_time_for_replay(replay_df, t_preview)
     next_event = _next_event_for_replay(replay_df, t_preview)
 
-    with left:
-        st.markdown('<div class="cfds-control-block"><div class="cfds-control-title">Status</div>', unsafe_allow_html=True)
-        st.markdown(f'''
-            <div class="cfds-status-grid">
-              <div class="cfds-status-cell"><span>Replay time</span><b>{t_preview:.1f} / {replay_end:.1f} s</b></div>
-              <div class="cfds-status-cell"><span>Frames</span><b>{len(replay_df)}</b></div>
-              <div class="cfds-status-cell"><span>State</span><b><span class="cfds-state-pill">{state_preview}</span></b></div>
-              <div class="cfds-status-cell"><span>Next event</span><b>{next_event}</b></div>
-            </div>
-            ''', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(f'''
+        <div class="cfds-wide-status-strip">
+          <div class="cfds-status-cell"><span>Replay time</span><b>{t_preview:.1f} / {replay_end:.1f} s</b></div>
+          <div class="cfds-status-cell"><span>Frames</span><b>{len(replay_df)}</b></div>
+          <div class="cfds-status-cell"><span>State</span><b><span class="cfds-state-pill">{state_preview}</span></b></div>
+          <div class="cfds-status-cell"><span>Next event</span><b>{next_event}</b></div>
+          <div class="cfds-status-cell"><span>View control</span><b>Modebar reset axes</b></div>
+        </div>
+        ''', unsafe_allow_html=True)
 
-    with main:
-        st.markdown('<div class="cfds-graph-card"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3><span>V12.56 state bands • live cursor • event timeline</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="cfds-graph-card cfds-graph-card-wide"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3></div>', unsafe_allow_html=True)
 
-        if replay_engine == "Smooth browser animation" and graph_type != "GPS path":
-            plot_df, label = _replay_plot_data(replay_df, graph_type)
-            if plot_df is None:
-                st.info(label)
-                st.markdown('</div></div>', unsafe_allow_html=True)
-                return
-            fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
-            if fig is None:
-                st.info("Not enough numeric data to create browser-side animation. Try Manual scrub fallback.")
-                st.markdown('</div></div>', unsafe_allow_html=True)
-                return
-            st.plotly_chart(
-                fig,
-                use_container_width=True,
-                theme=None,
-                config={"displayModeBar": False, "responsive": True, "scrollZoom": False},
-            )
-            # State legend is outside the plot so labels never collide with graph titles or axes.
-            st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
-            # Fill the lower workspace with event/status chips instead of leaving an empty dark block.
-            chips = []
-            for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
-                chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
-            if chips:
-                st.markdown('<div class="cfds-event-strip">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
-            st.markdown('<div class="cfds-replay-tipbar">Use the embedded ▶ Play / ⏸ Pause inside the chart. Event names stay below the graph to avoid overlap on iPhone; vertical lines mark event time.</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    if replay_engine == "Smooth browser animation" and graph_type != "GPS path":
+        plot_df, label = _replay_plot_data(replay_df, graph_type)
+        if plot_df is None:
+            st.info(label)
+            st.markdown('</div></div>', unsafe_allow_html=True)
             return
-
-        if replay_engine == "Smooth browser animation" and graph_type == "GPS path":
-            st.info("GPS path still uses Manual scrub fallback because map playback is not browser-animated yet.")
-
-        total_frames = len(replay_df)
-        if "replay_frame" not in st.session_state:
-            st.session_state["replay_frame"] = 0
-        st.session_state["replay_frame"] = min(max(0, int(st.session_state["replay_frame"])), total_frames - 1)
-
-        frame = st.slider(
-            "Mission timeline",
-            min_value=0,
-            max_value=total_frames - 1,
-            value=st.session_state["replay_frame"],
-            step=1,
-            key="replay_timeline_slider",
-            help="Manual scrub mode: move through frames directly.",
+        fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
+        if fig is None:
+            st.info("Not enough numeric data to create browser-side animation. Try Manual scrub fallback.")
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            return
+        fig.update_layout(
+            height=700 if not mobile_fast else 660,
+            margin=dict(l=66, r=28, t=46, b=128),
+            dragmode="pan",
         )
-        st.session_state["replay_frame"] = frame
-        controls = st.columns(3)
-        reset = controls[0].button("↺ Reset", use_container_width=True, key="replay_reset_btn")
-        jump_end = controls[1].button("⏭ End", use_container_width=True, key="replay_end_btn")
-        if reset:
-            st.session_state["replay_frame"] = 0
-            st.rerun()
-        if jump_end:
-            st.session_state["replay_frame"] = total_frames - 1
-            st.rerun()
-
-        chart_slot = st.empty()
-        frame_idx = min(max(0, int(st.session_state["replay_frame"])), total_frames - 1)
-        sub = replay_df.iloc[: frame_idx + 1].copy()
-        if trail_mode != "Full trail" and not sub.empty:
-            seconds = float(trail_mode.split()[1])
-            t_now = float(sub["__REPLAY_TIME_S"].iloc[-1])
-            sub = sub[sub["__REPLAY_TIME_S"] >= t_now - seconds]
-        t_now = float(replay_df["__REPLAY_TIME_S"].iloc[frame_idx])
-        st.markdown(f'<div class="cfds-mini-help">Replay time: <b>{t_now:.1f} s</b> / {replay_end:.1f} s • Frame {frame_idx+1}/{total_frames}</div>', unsafe_allow_html=True)
-
-        if graph_type == "GPS path":
-            import pandas as pd
-            lat_col, lat = _numeric_series(sub, ["GPS_LAT", "LAT", "LATITUDE"])
-            lon_col, lon = _numeric_series(sub, ["GPS_LON", "LON", "LONGITUDE"])
-            if lat_col is None or lon_col is None:
-                chart_slot.info("No GPS latitude/longitude columns found for path replay.")
-            else:
-                gps = pd.DataFrame({"lat": lat, "lon": lon}).dropna()
-                gps = gps[(gps["lat"].abs() > 0.0001) & (gps["lon"].abs() > 0.0001)]
-                if gps.empty:
-                    chart_slot.info("GPS path has no valid coordinates yet at this frame.")
-                else:
-                    chart_slot.map(gps, use_container_width=True)
-        else:
-            plot_df, label = _replay_plot_data(sub, graph_type)
-            if plot_df is None:
-                chart_slot.info(label)
-            else:
-                plot_df = plot_df.dropna()
-                if plot_df.empty:
-                    chart_slot.info("No numeric data available yet for this replay frame.")
-                else:
-                    fig = _make_v1256_replay_fig(plot_df, label, replay_df, graph_type, t_now)
-                    chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False, "responsive": True})
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            theme=None,
+            config={
+                "displayModeBar": True,
+                "displaylogo": False,
+                "responsive": True,
+                "scrollZoom": True,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+            },
+        )
         st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
         chips = []
         for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
             chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
         if chips:
-            st.markdown('<div class="cfds-event-strip">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
+            st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cfds-replay-tipbar">Graph is now full-width. Use embedded ▶ Play / ⏸ Pause for replay; use Plotly modebar reset axes to reset zoom/pan.</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    if replay_engine == "Smooth browser animation" and graph_type == "GPS path":
+        st.info("GPS path still uses Manual scrub fallback because map playback is not browser-animated yet.")
+
+    total_frames = len(replay_df)
+    if "replay_frame_wide" not in st.session_state:
+        st.session_state["replay_frame_wide"] = 0
+    st.session_state["replay_frame_wide"] = min(max(0, int(st.session_state["replay_frame_wide"])), total_frames - 1)
+
+    frame = st.slider(
+        "Mission timeline",
+        min_value=0,
+        max_value=total_frames - 1,
+        value=st.session_state["replay_frame_wide"],
+        step=1,
+        key="replay_timeline_slider_wide",
+        help="Manual scrub mode: move through frames directly.",
+    )
+    st.session_state["replay_frame_wide"] = frame
+    controls = st.columns(3)
+    reset = controls[0].button("↺ Reset frame", use_container_width=True, key="replay_reset_btn_wide")
+    jump_end = controls[1].button("⏭ End", use_container_width=True, key="replay_end_btn_wide")
+    if reset:
+        st.session_state["replay_frame_wide"] = 0
+        st.rerun()
+    if jump_end:
+        st.session_state["replay_frame_wide"] = total_frames - 1
+        st.rerun()
+
+    chart_slot = st.empty()
+    frame_idx = min(max(0, int(st.session_state["replay_frame_wide"])), total_frames - 1)
+    sub = replay_df.iloc[: frame_idx + 1].copy()
+    if trail_mode != "Full trail" and not sub.empty:
+        seconds = float(trail_mode.split()[1])
+        t_now = float(sub["__REPLAY_TIME_S"].iloc[-1])
+        sub = sub[sub["__REPLAY_TIME_S"] >= t_now - seconds]
+    t_now = float(replay_df["__REPLAY_TIME_S"].iloc[frame_idx])
+    st.markdown(f'<div class="cfds-mini-help">Replay time: <b>{t_now:.1f} s</b> / {replay_end:.1f} s • Frame {frame_idx+1}/{total_frames}</div>', unsafe_allow_html=True)
+
+    if graph_type == "GPS path":
+        import pandas as pd
+        lat_col, lat = _numeric_series(sub, ["GPS_LAT", "LAT", "LATITUDE"])
+        lon_col, lon = _numeric_series(sub, ["GPS_LON", "LON", "LONGITUDE"])
+        if lat_col is None or lon_col is None:
+            chart_slot.info("No GPS latitude/longitude columns found for path replay.")
+        else:
+            gps = pd.DataFrame({"lat": lat, "lon": lon}).dropna()
+            gps = gps[(gps["lat"].abs() > 0.0001) & (gps["lon"].abs() > 0.0001)]
+            if gps.empty:
+                chart_slot.info("GPS path has no valid coordinates yet at this frame.")
+            else:
+                chart_slot.map(gps, use_container_width=True)
+    else:
+        plot_df, label = _replay_plot_data(sub, graph_type)
+        if plot_df is None:
+            chart_slot.info(label)
+        else:
+            plot_df = plot_df.dropna()
+            if plot_df.empty:
+                chart_slot.info("No numeric data available yet for this replay frame.")
+            else:
+                fig = _make_v1256_replay_fig(plot_df, label, replay_df, graph_type, t_now)
+                fig.update_layout(height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+    st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
+    chips = []
+    for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+        chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
+    if chips:
+        st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 def quick_data_diagnostics(input_path: Path) -> dict:
@@ -2057,6 +2066,368 @@ st.markdown(
         }
         .cfds-panel { padding: 1rem .95rem !important; }
         .cfds-panel-title { font-size: 1.02rem !important; letter-spacing: .16em !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --- GLOBAL UI VISIBILITY HARDENING FIX (final override layer) ---
+# Keep this block at the very end so it wins over older V12.56 skin rules and Streamlit defaults.
+st.markdown(
+    """
+    <style>
+    :root {
+        --cfds-readable-text-strong: #F3FCFF;
+        --cfds-readable-text: #DDF4FF;
+        --cfds-readable-muted: #B7C9D9;
+        --cfds-readable-dim: #8EA8BA;
+        --cfds-readable-panel: #071827;
+        --cfds-readable-card: #0B2136;
+        --cfds-readable-card-2: #0E2B45;
+        --cfds-readable-border: rgba(56, 213, 255, .42);
+        --cfds-readable-border-soft: rgba(56, 213, 255, .24);
+        --cfds-readable-cyan: #38D5FF;
+        --cfds-readable-blue: #0B84FF;
+        --cfds-readable-red: #FF4B55;
+    }
+
+    /* Global text hierarchy: no more dim labels on mobile */
+    html, body, [data-testid="stAppViewContainer"], .stApp,
+    [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] *,
+    [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] *,
+    label, label *, p, span, small, div[role="radiogroup"] *,
+    [data-testid="stCheckbox"] *, [data-testid="stRadio"] *, [data-testid="stSlider"] *,
+    [data-testid="stSelectbox"] *, [data-testid="stMultiSelect"] * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+        text-shadow: none !important;
+    }
+
+    h1, h2, h3, h4, h5, h6,
+    .cfds-panel-title, .cfds-control-title, .cfds-replay-kicker,
+    .cfds-graph-titlebar h3 {
+        color: var(--cfds-readable-cyan) !important;
+        opacity: 1 !important;
+        text-shadow: 0 0 10px rgba(56, 213, 255, .16) !important;
+    }
+
+    .stCaptionContainer, .stCaptionContainer *, small,
+    .cfds-mobile-note, .cfds-replay-sub, .cfds-mini-help,
+    .cfds-event-chip span, .cfds-status-cell span {
+        color: var(--cfds-readable-muted) !important;
+        opacity: 1 !important;
+    }
+
+    /* Panels/cards: visible edges and readable contents */
+    .cfds-panel, .cfds-card, .metric-card, .replay-card,
+    .cfds-control-block, .cfds-graph-card,
+    [data-testid="stExpander"], [data-testid="stVerticalBlockBorderWrapper"] {
+        background: rgba(7, 24, 39, .94) !important;
+        border-color: var(--cfds-readable-border-soft) !important;
+        color: var(--cfds-readable-text) !important;
+    }
+
+    /* Buttons should never become white-on-white or pale-on-white */
+    .stButton button, .stDownloadButton button,
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploaderDropzone"] button {
+        background: linear-gradient(180deg, #0B84FF, #005FB8) !important;
+        color: #FFFFFF !important;
+        border: 1px solid rgba(234, 251, 255, .75) !important;
+        border-radius: 12px !important;
+        font-weight: 900 !important;
+        opacity: 1 !important;
+    }
+    .stButton button *, .stDownloadButton button *,
+    div[data-testid="stFileUploader"] button *,
+    div[data-testid="stFileUploaderDropzone"] button * {
+        color: #FFFFFF !important;
+        fill: #FFFFFF !important;
+        opacity: 1 !important;
+    }
+
+    /* File uploader: full dropzone + selected file chip readability */
+    div[data-testid="stFileUploader"] {
+        background: rgba(7, 24, 39, .96) !important;
+        border: 1px solid var(--cfds-readable-border-soft) !important;
+        border-radius: 16px !important;
+        padding: .65rem !important;
+        color: var(--cfds-readable-text) !important;
+    }
+    div[data-testid="stFileUploader"] section,
+    div[data-testid="stFileUploaderDropzone"] {
+        background: rgba(11, 33, 54, .98) !important;
+        border: 1px dashed var(--cfds-readable-border) !important;
+        border-radius: 14px !important;
+        color: var(--cfds-readable-text) !important;
+    }
+    div[data-testid="stFileUploader"] section *,
+    div[data-testid="stFileUploaderDropzone"] *,
+    div[data-testid="stFileUploader"] small,
+    div[data-testid="stFileUploader"] label,
+    div[data-testid="stFileUploader"] label * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stFileUploader"] svg,
+    div[data-testid="stFileUploaderDropzone"] svg {
+        color: var(--cfds-readable-cyan) !important;
+        fill: var(--cfds-readable-cyan) !important;
+        opacity: 1 !important;
+    }
+
+    /* Uploaded-file chip selectors vary by Streamlit version; cover the common wrappers. */
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFile"],
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] *,
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFileName"],
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFileSize"],
+    div[data-testid="stFileUploader"] section + div,
+    div[data-testid="stFileUploader"] section + div *,
+    div[data-testid="stFileUploader"] [class*="uploaded"],
+    div[data-testid="stFileUploader"] [class*="Uploaded"],
+    div[data-testid="stFileUploader"] [class*="file"],
+    div[data-testid="stFileUploader"] [class*="File"] {
+        color: var(--cfds-readable-text-strong) !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stFileUploader"] [data-testid="stFileUploaderFile"],
+    div[data-testid="stFileUploader"] section + div > div {
+        background: var(--cfds-readable-card-2) !important;
+        border: 1px solid var(--cfds-readable-border) !important;
+        border-radius: 12px !important;
+    }
+
+    /* Inputs/select boxes: keep readable even if Streamlit theme creates white controls. */
+    input, textarea, [data-baseweb="input"] *, [data-baseweb="textarea"] *,
+    [data-baseweb="select"], [data-baseweb="select"] *,
+    [data-baseweb="popover"] *, [data-baseweb="menu"] * {
+        color: #06111F !important;
+        opacity: 1 !important;
+    }
+    [data-baseweb="select"] > div,
+    [data-baseweb="input"] > div,
+    [data-baseweb="textarea"] > div {
+        background: #F7FCFF !important;
+        border: 1px solid rgba(56, 213, 255, .55) !important;
+    }
+
+    /* Checkbox/radio controls: label contrast and spacing */
+    [data-testid="stCheckbox"] label,
+    [data-testid="stRadio"] label,
+    [data-testid="stCheckbox"] label *,
+    [data-testid="stRadio"] label * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+        line-height: 1.45 !important;
+    }
+    [data-testid="stCheckbox"] svg,
+    [data-testid="stRadio"] svg {
+        opacity: 1 !important;
+        filter: drop-shadow(0 0 3px rgba(56,213,255,.18));
+    }
+
+    /* Slider text/ticks/value: brighter and separated */
+    [data-testid="stSlider"] *,
+    [data-testid="stSlider"] [data-testid="stTickBar"] * {
+        color: var(--cfds-readable-text) !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSlider"] div[role="slider"] {
+        box-shadow: 0 0 0 4px rgba(255,75,85,.22), 0 0 10px rgba(255,75,85,.18) !important;
+    }
+
+    /* Mobile spacing: controls must breathe on iPhone */
+    @media (max-width: 760px) {
+        .block-container { padding-left: .85rem !important; padding-right: .85rem !important; }
+        .cfds-panel, .cfds-control-block, .cfds-graph-card { padding: 1rem !important; }
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stCheckbox"] p,
+        [data-testid="stRadio"] p,
+        div[role="radiogroup"] p {
+            font-size: 1rem !important;
+            line-height: 1.55 !important;
+        }
+        [data-testid="stCheckbox"], [data-testid="stRadio"] {
+            margin-bottom: .28rem !important;
+        }
+        div[data-testid="stFileUploader"] { padding: .75rem !important; }
+        div[data-testid="stFileUploader"] section { min-height: 76px !important; }
+        .cfds-panel-title { font-size: 1.02rem !important; letter-spacing: .14em !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Replay wide-layout final override: put controls above the graph and give Plotly max width.
+st.markdown(
+    """
+    <style>
+    .cfds-replay-wide-shell {
+        padding: 1.05rem !important;
+        max-width: 100% !important;
+    }
+    .cfds-wide-controls {
+        border: 1px solid rgba(56,213,255,.34);
+        background: linear-gradient(180deg, rgba(7,24,39,.92), rgba(5,11,18,.88));
+        border-radius: 18px;
+        padding: .95rem 1rem 1rem 1rem;
+        margin: .85rem 0 .8rem 0;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    }
+    .cfds-wide-controls-title {
+        color: #38D5FF;
+        font-size: .82rem;
+        letter-spacing: .18em;
+        text-transform: uppercase;
+        font-weight: 900;
+        margin-bottom: .45rem;
+    }
+    .cfds-wide-status-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: .65rem;
+        margin: .7rem 0 .8rem 0;
+    }
+    .cfds-graph-card-wide {
+        padding: .75rem .85rem 1rem .85rem !important;
+        width: 100% !important;
+    }
+    .cfds-graph-card-wide .js-plotly-plot,
+    .cfds-graph-card-wide [data-testid="stPlotlyChart"] {
+        width: 100% !important;
+    }
+    .cfds-event-strip-wide {
+        margin-top: .7rem !important;
+    }
+    .cfds-wide-help {
+        color: #BFD7EA !important;
+        margin-top: .4rem;
+        line-height: 1.55;
+    }
+    /* Make the modebar usable and visible on dark backgrounds. */
+    .modebar {
+        background: rgba(7,24,39,.90) !important;
+        border: 1px solid rgba(56,213,255,.34) !important;
+        border-radius: 10px !important;
+        padding: 2px !important;
+    }
+    .modebar-btn svg path { fill: #DDF6FF !important; }
+    .modebar-btn:hover svg path { fill: #38D5FF !important; }
+    @media (max-width: 760px) {
+        .cfds-wide-status-strip { grid-template-columns: 1fr 1fr; }
+        .cfds-wide-controls { padding: .78rem .72rem; }
+        .cfds-graph-card-wide { padding: .5rem !important; }
+        .cfds-graph-card-wide [data-testid="stPlotlyChart"] { min-height: 520px; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# Replay spacing polish override: keep graph wide, but stop x-axis / state / event text from crowding.
+st.markdown(
+    """
+    <style>
+    .cfds-graph-card-wide {
+        padding: .95rem 1rem 1.05rem 1rem !important;
+        overflow: visible !important;
+    }
+    .cfds-graph-titlebar {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        min-height: 2.35rem !important;
+        padding: .22rem .25rem .72rem .25rem !important;
+        margin-bottom: .15rem !important;
+    }
+    .cfds-graph-titlebar h3 {
+        color: #EAFBFF !important;
+        font-size: clamp(1.05rem, 1.4vw, 1.28rem) !important;
+        letter-spacing: .11em !important;
+        line-height: 1.25 !important;
+        margin: 0 !important;
+    }
+    .cfds-graph-titlebar span { display: none !important; }
+
+    .cfds-state-strip {
+        display: grid !important;
+        grid-template-columns: repeat(7, minmax(90px, 1fr)) !important;
+        gap: .78rem !important;
+        margin: 1.38rem .15rem .86rem .15rem !important;
+        padding: .95rem .90rem .82rem .90rem !important;
+        overflow-x: auto !important;
+        align-items: stretch !important;
+    }
+    .cfds-state-strip-title {
+        top: -.82rem !important;
+        left: .90rem !important;
+        font-size: .67rem !important;
+        padding: 0 .55rem !important;
+        letter-spacing: .13em !important;
+    }
+    .cfds-state-chip {
+        min-height: 2.55rem !important;
+        padding: .46rem .56rem !important;
+        justify-content: center !important;
+        gap: .42rem !important;
+        line-height: 1.1 !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+    }
+    .cfds-state-dot {
+        width: .82rem !important;
+        height: .82rem !important;
+        min-width: .82rem !important;
+    }
+
+    .cfds-event-strip-wide {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important;
+        gap: .72rem !important;
+        margin: .92rem .15rem .20rem .15rem !important;
+    }
+    .cfds-event-chip {
+        min-height: 3.05rem !important;
+        padding: .64rem .72rem !important;
+    }
+    .cfds-event-chip span {
+        font-size: .66rem !important;
+        line-height: 1.05 !important;
+        margin-bottom: .18rem !important;
+    }
+    .cfds-event-chip b {
+        font-size: .88rem !important;
+        line-height: 1.15 !important;
+    }
+
+    .cfds-replay-tipbar {
+        margin-top: .82rem !important;
+        padding-top: .70rem !important;
+        line-height: 1.55 !important;
+    }
+
+    .modebar {
+        margin-top: .18rem !important;
+        margin-right: .18rem !important;
+        z-index: 20 !important;
+    }
+
+    @media (max-width: 760px) {
+        .cfds-graph-card-wide { padding: .72rem .55rem .82rem .55rem !important; }
+        .cfds-graph-titlebar { min-height: 2rem !important; padding-bottom: .55rem !important; }
+        .cfds-state-strip {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: .55rem !important;
+            padding: .88rem .62rem .70rem .62rem !important;
+            margin-top: 1.25rem !important;
+        }
+        .cfds-state-chip { justify-content: flex-start !important; min-height: 2.35rem !important; }
+        .cfds-event-strip-wide { grid-template-columns: 1fr 1fr !important; gap: .55rem !important; }
+        .cfds-event-chip { min-height: 2.75rem !important; }
     }
     </style>
     """,
