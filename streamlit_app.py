@@ -1022,29 +1022,66 @@ def _downsample_for_replay(df, max_points: int):
     return out.reset_index(drop=True)
 
 def _replay_plot_data(df, graph_type: str):
-    """Choose columns and display labels for the selected replay graph."""
+    """Choose columns and display labels for the selected replay graph.
+
+    Velocity/descent-rate is now resilient: if the log does not include an explicit
+    velocity column, replay derives descent rate from altitude and mission time.
+    Motion has split options instead of one generic "Motion magnitude" bucket.
+    """
     import pandas as pd
+    import numpy as np
+
     graph_map = {
-        "Altitude": (["ALTITUDE", "ALT", "ALTITUDE_M"], "Altitude (m)"),
-        "Velocity / Descent rate": (["DESCENT_RATE_DERIVED", "VELOCITY_DERIVED", "VELOCITY"], "Velocity / descent rate"),
-        "Voltage": (["VOLTAGE", "VBATT", "BATTERY_VOLTAGE"], "Voltage (V)"),
-        "Temperature": (["TEMPERATURE", "TEMP", "TEMP_C"], "Temperature (°C)"),
-        "Pressure": (["PRESSURE", "PRES", "BARO_PRESSURE"], "Pressure"),
-        "Current": (["CURRENT", "CURR", "BATTERY_CURRENT"], "Current (A)"),
-        "GPS altitude": (["GPS_ALT", "GNSS_ALT", "GPS_ALTITUDE"], "GPS altitude (m)"),
+        "Altitude": (["ALTITUDE", "ALT", "ALTITUDE_M", "BARO_ALTITUDE", "ALTITUDE_FT_M"], "Altitude (m)"),
+        "Voltage": (["VOLTAGE", "VBATT", "BATTERY_VOLTAGE", "VOLTAGE_V"], "Voltage (V)"),
+        "Temperature": (["TEMPERATURE", "TEMP", "TEMP_C", "TEMPERATURE_C"], "Temperature (°C)"),
+        "Pressure": (["PRESSURE", "PRES", "BARO_PRESSURE", "PRESSURE_PA", "PRESSURE_HPA"], "Pressure"),
+        "Current": (["CURRENT", "CURR", "BATTERY_CURRENT", "CURRENT_A"], "Current (A)"),
+        "GPS altitude": (["GPS_ALT", "GNSS_ALT", "GPS_ALTITUDE", "GPS_ALTITUDE_M", "ALT_GPS"], "GPS altitude (m)"),
     }
-    if graph_type == "Motion magnitude":
-        candidates = [
-            (["ACCEL_R", "ACCEL_P", "ACCEL_Y"], "Acceleration magnitude"),
-            (["GYRO_R", "GYRO_P", "GYRO_Y"], "Gyro magnitude"),
-        ]
-        for cols, label in candidates:
-            if all(c in df.columns for c in cols):
-                x = pd.to_numeric(df[cols[0]], errors="coerce")
-                y = pd.to_numeric(df[cols[1]], errors="coerce")
-                z = pd.to_numeric(df[cols[2]], errors="coerce")
-                return pd.DataFrame({"Mission time (s)": df["__REPLAY_TIME_S"], label: (x*x + y*y + z*z) ** 0.5}), label
-        return None, "No acceleration/gyro XYZ columns found."
+
+    # Descent rate: prefer explicit columns, otherwise derive from altitude.
+    if graph_type == "Velocity / Descent rate":
+        col, ser = _numeric_series(df, [
+            "DESCENT_RATE", "DESCENT_RATE_DERIVED", "DESCENT_RATE_MPS",
+            "VELOCITY_DERIVED", "VELOCITY", "VERTICAL_VELOCITY", "VERTICAL_SPEED", "VZ",
+        ])
+        if col is not None and ser.notna().sum() >= 2:
+            label = "Velocity / descent rate"
+            return pd.DataFrame({"Mission time (s)": df["__REPLAY_TIME_S"], label: ser}), label
+
+        alt_col, alt = _numeric_series(df, ["ALTITUDE", "ALT", "ALTITUDE_M", "BARO_ALTITUDE", "GPS_ALT", "GPS_ALTITUDE", "GPS_ALTITUDE_M"])
+        if alt_col is not None and alt.notna().sum() >= 3:
+            t = pd.to_numeric(df["__REPLAY_TIME_S"], errors="coerce")
+            d = pd.DataFrame({"t": t, "alt": alt}).dropna().sort_values("t")
+            d = d.drop_duplicates(subset=["t"], keep="last")
+            if len(d) >= 3:
+                tt = d["t"].to_numpy(dtype=float)
+                aa = d["alt"].to_numpy(dtype=float)
+                # Positive value = descending. Smooth lightly to avoid noisy derivative spikes.
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    rate = -np.gradient(aa, tt)
+                rate = pd.Series(rate).replace([np.inf, -np.inf], np.nan).rolling(7, center=True, min_periods=1).median().to_numpy()
+                out = pd.DataFrame({"Mission time (s)": tt, "Descent rate (m/s)": rate})
+                return out, "Descent rate (m/s)"
+        return None, "No usable velocity column and could not derive descent rate from altitude."
+
+    motion_mag_map = {
+        "Acceleration magnitude": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Acceleration magnitude"),
+        "Gyro magnitude": (["GYRO_R", "GYRO_X", "GX"], ["GYRO_P", "GYRO_Y", "GY"], ["GYRO_Y", "GYRO_Z", "GZ"], "Gyro magnitude"),
+        "Tilt magnitude": (["TILT_R", "TILT_X", "ROLL"], ["TILT_P", "TILT_Y", "PITCH"], ["TILT_Y", "TILT_Z", "YAW"], "Tilt magnitude"),
+        # Backward compatibility.
+        "Motion magnitude": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Motion magnitude"),
+    }
+    if graph_type in motion_mag_map:
+        xs, ys, zs, label = motion_mag_map[graph_type]
+        x_name, x = _numeric_series(df, xs)
+        y_name, y = _numeric_series(df, ys)
+        z_name, z = _numeric_series(df, zs)
+        if x_name and y_name and z_name:
+            mag = (pd.to_numeric(x, errors="coerce")**2 + pd.to_numeric(y, errors="coerce")**2 + pd.to_numeric(z, errors="coerce")**2) ** 0.5
+            return pd.DataFrame({"Mission time (s)": df["__REPLAY_TIME_S"], label: mag}), label
+        return None, f"No usable XYZ columns found for {graph_type}."
 
     if graph_type not in graph_map:
         return None, "Unsupported replay graph."
@@ -1053,6 +1090,54 @@ def _replay_plot_data(df, graph_type: str):
         return None, f"No usable column found for {graph_type}."
     label = graph_map[graph_type][1]
     return pd.DataFrame({"Mission time (s)": df["__REPLAY_TIME_S"], label: y}), label
+
+
+def _motion_xyz_data(df, graph_type: str):
+    """Return a multi-axis dataframe for acceleration/gyro/tilt replay."""
+    import pandas as pd
+    axis_sets = {
+        "Acceleration XYZ": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Acceleration"),
+        "Gyro XYZ": (["GYRO_R", "GYRO_X", "GX"], ["GYRO_P", "GYRO_Y", "GY"], ["GYRO_Y", "GYRO_Z", "GZ"], "Gyro"),
+        "Tilt XYZ": (["TILT_R", "TILT_X", "ROLL"], ["TILT_P", "TILT_Y", "PITCH"], ["TILT_Y", "TILT_Z", "YAW"], "Tilt"),
+    }
+    if graph_type not in axis_sets:
+        return None, "Unsupported motion XYZ graph."
+    xs, ys, zs, label = axis_sets[graph_type]
+    x_name, x = _numeric_series(df, xs)
+    y_name, y = _numeric_series(df, ys)
+    z_name, z = _numeric_series(df, zs)
+    if not (x_name and y_name and z_name):
+        return None, f"No usable XYZ columns found for {graph_type}."
+    out = pd.DataFrame({"Mission time (s)": df["__REPLAY_TIME_S"], "X": x, "Y": y, "Z": z})
+    return out, label
+
+
+def _gps_path_data(df):
+    """Return local XY meters and XYZ data from GPS lat/lon/alt columns."""
+    import pandas as pd
+    import numpy as np
+    lat_col, lat = _numeric_series(df, ["GPS_LAT", "GPS_LATITUDE", "GNSS_LAT", "LAT", "LATITUDE"])
+    lon_col, lon = _numeric_series(df, ["GPS_LON", "GPS_LONGITUDE", "GNSS_LON", "LON", "LONGITUDE", "LONG"])
+    alt_col, alt = _numeric_series(df, ["GPS_ALT", "GPS_ALTITUDE", "GPS_ALTITUDE_M", "GNSS_ALT", "ALTITUDE", "ALT", "ALTITUDE_M"])
+    if lat_col is None or lon_col is None:
+        return None, "No GPS latitude/longitude columns found."
+    d = pd.DataFrame({"t": df["__REPLAY_TIME_S"], "lat": lat, "lon": lon})
+    d["alt"] = alt if alt_col is not None else 0.0
+    d = d.dropna(subset=["t", "lat", "lon"]).copy()
+    d = d[(d["lat"].abs() > 0.0001) & (d["lon"].abs() > 0.0001)]
+    if len(d) < 2:
+        return None, "GPS path needs at least two valid coordinates."
+    lat0 = float(d["lat"].iloc[0])
+    lon0 = float(d["lon"].iloc[0])
+    R = 6371000.0
+    lat_rad = np.deg2rad(d["lat"].to_numpy(dtype=float))
+    lon_rad = np.deg2rad(d["lon"].to_numpy(dtype=float))
+    lat0_rad = np.deg2rad(lat0)
+    lon0_rad = np.deg2rad(lon0)
+    x_east = (lon_rad - lon0_rad) * np.cos(lat0_rad) * R
+    y_north = (lat_rad - lat0_rad) * R
+    z_alt = pd.to_numeric(d["alt"], errors="coerce").ffill().bfill().fillna(0).to_numpy(dtype=float)
+    return pd.DataFrame({"Mission time (s)": d["t"].to_numpy(dtype=float), "East (m)": x_east, "North (m)": y_north, "Altitude (m)": z_alt, "lat": d["lat"].to_numpy(dtype=float), "lon": d["lon"].to_numpy(dtype=float)}), "GPS path"
 
 
 
@@ -1478,6 +1563,116 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
     fig.update_yaxes(title_text=label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
     return fig
 
+
+def _make_v1256_multitrace_animation_fig(plot_df, label: str, full_df, graph_type: str, frame_duration_ms: int = 40):
+    """Browser-side animation for X/Y/Z motion traces.
+
+    Static lines stay fixed; only the three current markers and one time cursor animate.
+    """
+    import plotly.graph_objects as go
+    import pandas as pd
+    import numpy as np
+    if plot_df is None or plot_df.empty:
+        return None
+    d = plot_df.dropna(subset=["Mission time (s)"]).copy()
+    if d.empty:
+        return None
+    x_all = pd.to_numeric(d["Mission time (s)"], errors="coerce").to_numpy(dtype=float)
+    axes = ["X", "Y", "Z"]
+    colors = {"X": "#38BDF8", "Y": "#F472B6", "Z": "#22C55E"}
+    y_arrays = []
+    for axn in axes:
+        if axn not in d.columns:
+            return None
+        y_arrays.append(pd.to_numeric(d[axn], errors="coerce").to_numpy(dtype=float))
+    valid = ~np.isnan(x_all)
+    for arr in y_arrays:
+        valid = valid & ~np.isnan(arr)
+    x_all = x_all[valid]
+    y_arrays = [arr[valid] for arr in y_arrays]
+    if len(x_all) < 2:
+        return None
+    all_y = np.concatenate(y_arrays)
+    y_min, y_max = float(np.nanmin(all_y)), float(np.nanmax(all_y))
+    if y_min == y_max:
+        y_min -= 1; y_max += 1
+    pad = (y_max - y_min) * 0.10
+    y0, y1 = y_min - pad, y_max + pad
+    fig = go.Figure()
+    for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.08, min(float(alpha), 0.13)), line_width=1.5, line_color=border)
+        fig.add_vline(x=x0, line_width=1.0, line_color=border, line_dash="solid", opacity=0.90)
+    # static full traces
+    for axn, arr in zip(axes, y_arrays):
+        fig.add_trace(go.Scatter(x=x_all, y=arr, mode="lines", name=f"{label} {axn}", line=dict(color=colors[axn], width=2.6, shape="spline", smoothing=1.05), showlegend=True))
+    # current markers for each axis
+    for axn, arr in zip(axes, y_arrays):
+        fig.add_trace(go.Scatter(x=[x_all[0]], y=[arr[0]], mode="markers", name=f"Current {axn}", marker=dict(size=9, color=colors[axn], line=dict(color="white", width=1.2)), showlegend=False))
+    # cursor
+    fig.add_trace(go.Scatter(x=[x_all[0], x_all[0]], y=[y0, y1], mode="lines", name="Time cursor", line=dict(color="#EAFBFF", width=2, dash="dash"), showlegend=False, hoverinfo="skip"))
+    current_indices = list(range(3, 6))
+    cursor_index = 6
+    frames=[]
+    for i in range(len(x_all)):
+        frame_data = [go.Scatter(x=[x_all[i]], y=[arr[i]]) for arr in y_arrays]
+        frame_data.append(go.Scatter(x=[x_all[i], x_all[i]], y=[y0, y1]))
+        frames.append(go.Frame(name=str(i), data=frame_data, traces=current_indices+[cursor_index]))
+    fig.frames=frames
+    step_stride=max(1,len(x_all)//18)
+    steps=[dict(method="animate", args=[[str(i)], {"mode":"immediate", "frame":{"duration":0,"redraw":False}, "transition":{"duration":0}}], label=f"{x_all[i]:.0f}s") for i in range(0,len(x_all),step_stride)]
+    safe=int(max(20,min(1200,frame_duration_ms)))
+    fig.update_layout(title=None, height=600, margin=dict(l=66,r=28,t=38,b=105), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#071B2A", font=dict(color="#DDEBFF", size=12), hovermode="x unified", showlegend=True, legend=dict(orientation="h", y=1.08, x=0.40, bgcolor="rgba(7,24,39,.65)"), yaxis=dict(range=[y0,y1]), uirevision="cfds_motion_xyz",
+        updatemenus=[dict(type="buttons", direction="left", x=0.012,y=1.08,xanchor="left",yanchor="top",showactive=False,bgcolor="rgba(7,24,39,.96)",bordercolor="rgba(56,213,255,.48)",borderwidth=1,buttons=[dict(label="▶ Play",method="animate",args=[None,{"fromcurrent":True,"frame":{"duration":safe,"redraw":False},"transition":{"duration":0},"mode":"immediate"}]),dict(label="⏸ Pause",method="animate",args=[[None],{"frame":{"duration":0,"redraw":False},"mode":"immediate","transition":{"duration":0}}])])],
+        sliders=[dict(active=0,x=0.02,y=-0.07,len=0.94,xanchor="left",yanchor="top",pad=dict(t=8,b=0),currentvalue=dict(prefix="t = ",suffix=" s",font=dict(size=12,color="#DDEBFF")),steps=steps)])
+    fig.update_xaxes(title_text="Mission time (s)", title_standoff=28, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+    fig.update_yaxes(title_text=label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+    return fig
+
+
+def _make_gps_xy_animation_fig(gps_df, full_df, frame_duration_ms: int = 40):
+    import plotly.graph_objects as go
+    import pandas as pd
+    import numpy as np
+    d = gps_df.dropna(subset=["Mission time (s)", "East (m)", "North (m)"]).reset_index(drop=True)
+    if len(d) < 2:
+        return None
+    x = pd.to_numeric(d["East (m)"], errors="coerce").to_numpy(dtype=float)
+    y = pd.to_numeric(d["North (m)"], errors="coerce").to_numpy(dtype=float)
+    tt = pd.to_numeric(d["Mission time (s)"], errors="coerce").to_numpy(dtype=float)
+    valid = ~(np.isnan(x)|np.isnan(y)|np.isnan(tt))
+    x, y, tt = x[valid], y[valid], tt[valid]
+    if len(x) < 2:
+        return None
+    pad_x = max(2, (float(np.max(x))-float(np.min(x))) * .08)
+    pad_y = max(2, (float(np.max(y))-float(np.min(y))) * .08)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name="GPS XY path", line=dict(color="#66E8FF", width=3.4, shape="spline", smoothing=1.1), hovertemplate="East=%{x:.1f}m<br>North=%{y:.1f}m<extra></extra>"))
+    fig.add_trace(go.Scatter(x=[x[0]], y=[y[0]], mode="markers", name="Current", marker=dict(size=13, color="#EF4444", line=dict(color="white", width=1.5)), showlegend=False))
+    frames=[go.Frame(name=str(i), data=[go.Scatter(x=[x[i]], y=[y[i]])], traces=[1]) for i in range(len(x))]
+    fig.frames=frames
+    step_stride=max(1,len(x)//18)
+    steps=[dict(method="animate",args=[[str(i)],{"mode":"immediate","frame":{"duration":0,"redraw":False},"transition":{"duration":0}}],label=f"{tt[i]:.0f}s") for i in range(0,len(x),step_stride)]
+    safe=int(max(20,min(1200,frame_duration_ms)))
+    fig.update_layout(title=None,height=620,margin=dict(l=66,r=28,t=40,b=100),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="#071B2A",font=dict(color="#DDEBFF",size=12),showlegend=False,uirevision="cfds_gps_xy",xaxis=dict(range=[float(np.min(x))-pad_x,float(np.max(x))+pad_x],scaleanchor="y",scaleratio=1),yaxis=dict(range=[float(np.min(y))-pad_y,float(np.max(y))+pad_y]),
+        updatemenus=[dict(type="buttons",direction="left",x=0.012,y=1.08,xanchor="left",yanchor="top",showactive=False,bgcolor="rgba(7,24,39,.96)",bordercolor="rgba(56,213,255,.48)",borderwidth=1,buttons=[dict(label="▶ Play",method="animate",args=[None,{"fromcurrent":True,"frame":{"duration":safe,"redraw":False},"transition":{"duration":0},"mode":"immediate"}]),dict(label="⏸ Pause",method="animate",args=[[None],{"frame":{"duration":0,"redraw":False},"mode":"immediate","transition":{"duration":0}}])])],
+        sliders=[dict(active=0,x=0.02,y=-0.07,len=0.94,xanchor="left",yanchor="top",pad=dict(t=8,b=0),currentvalue=dict(prefix="t = ",suffix=" s",font=dict(size=12,color="#DDEBFF")),steps=steps)])
+    fig.update_xaxes(title_text="East from launch (m)",title_standoff=24,gridcolor="rgba(203,213,225,.14)",zeroline=False,linecolor="rgba(56,213,255,.45)",mirror=True,linewidth=1.2)
+    fig.update_yaxes(title_text="North from launch (m)",title_standoff=14,gridcolor="rgba(203,213,225,.14)",zeroline=False,linecolor="rgba(56,213,255,.45)",mirror=True,linewidth=1.2)
+    return fig
+
+
+def _make_gps_xyz_fig(gps_df):
+    import plotly.graph_objects as go
+    d = gps_df.dropna(subset=["East (m)", "North (m)", "Altitude (m)"]).reset_index(drop=True)
+    if len(d) < 2:
+        return None
+    fig = go.Figure()
+    fig.add_trace(go.Scatter3d(x=d["East (m)"], y=d["North (m)"], z=d["Altitude (m)"], mode="lines+markers", name="GPS XYZ path", line=dict(color="#66E8FF", width=5), marker=dict(size=2, color=d["Mission time (s)"], colorscale="Turbo", opacity=0.75)))
+    fig.add_trace(go.Scatter3d(x=[d["East (m)"].iloc[0]], y=[d["North (m)"].iloc[0]], z=[d["Altitude (m)"].iloc[0]], mode="markers", name="Start", marker=dict(size=5,color="#22C55E")))
+    fig.add_trace(go.Scatter3d(x=[d["East (m)"].iloc[-1]], y=[d["North (m)"].iloc[-1]], z=[d["Altitude (m)"].iloc[-1]], mode="markers", name="End", marker=dict(size=6,color="#EF4444")))
+    fig.update_layout(title=None,height=680,margin=dict(l=0,r=0,t=32,b=0),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="#071B2A",font=dict(color="#DDEBFF",size=12),scene=dict(bgcolor="#071B2A",xaxis=dict(title="East (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),yaxis=dict(title="North (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),zaxis=dict(title="Altitude (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),aspectmode="data"),legend=dict(orientation="h",y=1.02,x=0.02,bgcolor="rgba(7,24,39,.65)"),uirevision="cfds_gps_xyz")
+    return fig
+
 def _state_at_time_for_replay(df, t_now: float) -> str:
     """Return normalized STATE at/just before t_now for the replay status card."""
     try:
@@ -1541,7 +1736,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    graph_options = ["Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current", "GPS altitude", "Motion magnitude", "GPS path"]
+    graph_options = [
+        "Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current",
+        "GPS altitude", "GPS XY path", "GPS XYZ path", "GPS map path",
+        "Acceleration magnitude", "Acceleration XYZ", "Gyro magnitude", "Gyro XYZ", "Tilt magnitude", "Tilt XYZ",
+    ]
     speed_options = ["0.5x", "1x", "2x", "5x", "10x"]
     trail_options = ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"]
     butter_options = ["iPhone Smooth", "Butter", "Ultra Butter", "Battery Saver"]
@@ -1618,22 +1817,44 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
 
     st.markdown('<div class="cfds-graph-card cfds-graph-card-wide"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3></div>', unsafe_allow_html=True)
 
-    if replay_engine == "Smooth browser animation" and graph_type != "GPS path":
-        plot_df, label = _replay_plot_data(replay_df, graph_type)
-        if plot_df is None:
-            st.info(label)
-            st.markdown('</div></div>', unsafe_allow_html=True)
-            return
-        fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
+    if replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
+        fig = None
+        show_state_legend = True
+        if graph_type == "GPS XY path":
+            gps_df, msg = _gps_path_data(replay_df)
+            if gps_df is None:
+                st.info(msg)
+                st.markdown('</div></div>', unsafe_allow_html=True)
+                return
+            fig = _make_gps_xy_animation_fig(gps_df, replay_df, frame_duration_ms=frame_duration)
+            show_state_legend = False
+        elif graph_type == "GPS XYZ path":
+            gps_df, msg = _gps_path_data(replay_df)
+            if gps_df is None:
+                st.info(msg)
+                st.markdown('</div></div>', unsafe_allow_html=True)
+                return
+            fig = _make_gps_xyz_fig(gps_df)
+            show_state_legend = False
+        elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Tilt XYZ"):
+            plot_df, label = _motion_xyz_data(replay_df, graph_type)
+            if plot_df is None:
+                st.info(label)
+                st.markdown('</div></div>', unsafe_allow_html=True)
+                return
+            fig = _make_v1256_multitrace_animation_fig(plot_df, label, replay_df, graph_type, frame_duration_ms=frame_duration)
+        else:
+            plot_df, label = _replay_plot_data(replay_df, graph_type)
+            if plot_df is None:
+                st.info(label)
+                st.markdown('</div></div>', unsafe_allow_html=True)
+                return
+            fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
         if fig is None:
-            st.info("Not enough numeric data to create browser-side animation. Try Manual scrub fallback.")
+            st.info("Not enough data to create this replay. Try another graph or Manual scrub fallback.")
             st.markdown('</div></div>', unsafe_allow_html=True)
             return
-        fig.update_layout(
-            height=700 if not mobile_fast else 660,
-            margin=dict(l=66, r=28, t=46, b=128),
-            dragmode="pan",
-        )
+        fig.update_layout(dragmode="pan")
         st.plotly_chart(
             fig,
             use_container_width=True,
@@ -1646,19 +1867,20 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
             },
         )
-        st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
-        chips = []
-        for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
-            chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
-        if chips:
-            st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
-        st.markdown('<div class="cfds-replay-tipbar">Graph is now full-width. Use embedded ▶ Play / ⏸ Pause for replay; use Plotly modebar reset axes to reset zoom/pan.</div>', unsafe_allow_html=True)
+        if show_state_legend:
+            st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
+            chips = []
+            for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
+                chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
+            if chips:
+                st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cfds-replay-tipbar">GPS XY/XYZ and split motion graphs are now separated. Use embedded ▶ Play / ⏸ Pause for smooth replay; use Plotly reset axes after zoom/pan.</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         return
 
-    if replay_engine == "Smooth browser animation" and graph_type == "GPS path":
-        st.info("GPS path still uses Manual scrub fallback because map playback is not browser-animated yet.")
+    if replay_engine == "Smooth browser animation" and graph_type == "GPS map path":
+        st.info("GPS map path still uses Manual scrub fallback. Use GPS XY path for smooth browser animation or GPS XYZ path for 3D view.")
 
     total_frames = len(replay_df)
     if "replay_frame_wide" not in st.session_state:
@@ -1695,19 +1917,51 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     t_now = float(replay_df["__REPLAY_TIME_S"].iloc[frame_idx])
     st.markdown(f'<div class="cfds-mini-help">Replay time: <b>{t_now:.1f} s</b> / {replay_end:.1f} s • Frame {frame_idx+1}/{total_frames}</div>', unsafe_allow_html=True)
 
-    if graph_type == "GPS path":
+    if graph_type == "GPS map path":
         import pandas as pd
-        lat_col, lat = _numeric_series(sub, ["GPS_LAT", "LAT", "LATITUDE"])
-        lon_col, lon = _numeric_series(sub, ["GPS_LON", "LON", "LONGITUDE"])
+        lat_col, lat = _numeric_series(sub, ["GPS_LAT", "GPS_LATITUDE", "GNSS_LAT", "LAT", "LATITUDE"])
+        lon_col, lon = _numeric_series(sub, ["GPS_LON", "GPS_LONGITUDE", "GNSS_LON", "LON", "LONGITUDE", "LONG"])
         if lat_col is None or lon_col is None:
-            chart_slot.info("No GPS latitude/longitude columns found for path replay.")
+            chart_slot.info("No GPS latitude/longitude columns found for map replay.")
         else:
             gps = pd.DataFrame({"lat": lat, "lon": lon}).dropna()
             gps = gps[(gps["lat"].abs() > 0.0001) & (gps["lon"].abs() > 0.0001)]
             if gps.empty:
-                chart_slot.info("GPS path has no valid coordinates yet at this frame.")
+                chart_slot.info("GPS map has no valid coordinates yet at this frame.")
             else:
                 chart_slot.map(gps, use_container_width=True)
+    elif graph_type == "GPS XY path":
+        gps_df, msg = _gps_path_data(sub)
+        if gps_df is None:
+            chart_slot.info(msg)
+        else:
+            fig = _make_gps_xy_animation_fig(gps_df, replay_df, frame_duration_ms=0)
+            if fig is not None:
+                fig.update_layout(updatemenus=[], sliders=[])
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+            else:
+                chart_slot.info("GPS XY path needs more valid points.")
+    elif graph_type == "GPS XYZ path":
+        gps_df, msg = _gps_path_data(sub)
+        if gps_df is None:
+            chart_slot.info(msg)
+        else:
+            fig = _make_gps_xyz_fig(gps_df)
+            if fig is not None:
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True})
+            else:
+                chart_slot.info("GPS XYZ path needs more valid points.")
+    elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Tilt XYZ"):
+        plot_df, label = _motion_xyz_data(sub, graph_type)
+        if plot_df is None:
+            chart_slot.info(label)
+        else:
+            fig = _make_v1256_multitrace_animation_fig(plot_df, label, replay_df, graph_type, frame_duration_ms=0)
+            if fig is not None:
+                fig.update_layout(updatemenus=[], sliders=[], height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+            else:
+                chart_slot.info("No numeric data available yet for this replay frame.")
     else:
         plot_df, label = _replay_plot_data(sub, graph_type)
         if plot_df is None:
@@ -1773,18 +2027,18 @@ def render_family_selector(preset_name: str) -> list[str]:
     default = PRESETS.get(preset_name, PRESETS["Quick Check"])
     selected = []
     st.markdown("**Graph families**")
-    cols = st.columns(2)
-    for i, (key, meta) in enumerate(GRAPH_FAMILIES.items()):
-        with cols[i % 2]:
-            checked = st.checkbox(
-                meta["label"],
-                value=(key in default),
-                key=f"family_{preset_name}_{key}",
-                help=meta["hint"],
-                disabled=(preset_name != "Custom"),
-            )
-            if checked:
-                selected.append(key)
+    # Visibility-first: sidebar is narrow on iPhone, so two-column checkboxes
+    # make labels wrap badly. Stack them as full-width controls.
+    for key, meta in GRAPH_FAMILIES.items():
+        checked = st.checkbox(
+            meta["label"],
+            value=(key in default),
+            key=f"family_{preset_name}_{key}",
+            help=meta["hint"],
+            disabled=(preset_name != "Custom"),
+        )
+        if checked:
+            selected.append(key)
     return selected
 
 if "cfds_last_export" not in st.session_state:
@@ -2492,6 +2746,176 @@ st.markdown(
         font-weight: 800 !important;
     }
     .stFileUploader button { color: #EAFBFF !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# Final visibility + dark-control + butter smooth option override.
+st.markdown(
+    """
+    <style>
+    /* No white controls: keep Streamlit/BaseWeb widgets in CFDS dark HUD style. */
+    :root {
+        --cfds-control-bg: #0E2B45;
+        --cfds-control-bg-2: #071827;
+        --cfds-control-border: rgba(56,213,255,.72);
+        --cfds-control-text: #EAFBFF;
+        --cfds-control-muted: #BFD7EA;
+        --cfds-control-accent: #38D5FF;
+    }
+
+    /* Selectbox / dropdown closed state */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="select"] div,
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="textarea"] > div {
+        background: var(--cfds-control-bg) !important;
+        color: var(--cfds-control-text) !important;
+        border-color: var(--cfds-control-border) !important;
+        box-shadow: none !important;
+    }
+    div[data-baseweb="select"] span,
+    div[data-baseweb="select"] input,
+    div[data-baseweb="select"] svg,
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea {
+        color: var(--cfds-control-text) !important;
+        fill: var(--cfds-control-text) !important;
+        -webkit-text-fill-color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+    }
+
+    /* Dropdown open menu */
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] *,
+    ul[role="listbox"],
+    ul[role="listbox"] * {
+        background: #071827 !important;
+        color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+    }
+    li[role="option"], div[role="option"] {
+        background: #0B2136 !important;
+        border-bottom: 1px solid rgba(56,213,255,.12) !important;
+    }
+    li[role="option"]:hover, div[role="option"]:hover {
+        background: #0E2B45 !important;
+    }
+
+    /* File uploader whole area + selected-file chip. */
+    [data-testid="stFileUploader"] section {
+        background: rgba(11,33,54,.78) !important;
+        border: 1px dashed rgba(56,213,255,.70) !important;
+        border-radius: 14px !important;
+    }
+    [data-testid="stFileUploader"] section * {
+        color: var(--cfds-control-text) !important;
+        -webkit-text-fill-color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stFileUploaderDropzone"] {
+        background: rgba(11,33,54,.78) !important;
+        color: var(--cfds-control-text) !important;
+    }
+    [data-testid="stFileUploaderFile"],
+    [data-testid="stFileUploaderFile"] div,
+    [data-testid="stFileUploaderFile"] span,
+    [data-testid="stFileUploaderFile"] p,
+    [data-testid="stFileUploaderFile"] small {
+        background: #0E2B45 !important;
+        color: var(--cfds-control-text) !important;
+        -webkit-text-fill-color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+        font-weight: 800 !important;
+    }
+    [data-testid="stFileUploaderFile"] {
+        border: 1px solid rgba(56,213,255,.70) !important;
+        border-radius: 12px !important;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.04), 0 0 10px rgba(56,213,255,.10) !important;
+    }
+    [data-testid="stFileUploaderFile"] button,
+    [data-testid="stFileUploader"] button {
+        background: #0B2136 !important;
+        border: 1px solid rgba(56,213,255,.65) !important;
+        color: var(--cfds-control-text) !important;
+        -webkit-text-fill-color: var(--cfds-control-text) !important;
+    }
+    [data-testid="stFileUploaderFile"] svg,
+    [data-testid="stFileUploader"] svg {
+        fill: var(--cfds-control-accent) !important;
+        color: var(--cfds-control-accent) !important;
+    }
+
+    /* Checkbox / radio: readable labels, no dim disabled-looking text. */
+    [data-testid="stCheckbox"], [data-testid="stRadio"] { color: var(--cfds-control-text) !important; }
+    [data-testid="stCheckbox"] label,
+    [data-testid="stRadio"] label,
+    [data-testid="stCheckbox"] label *,
+    [data-testid="stRadio"] label *,
+    div[role="radiogroup"] label,
+    div[role="radiogroup"] label * {
+        color: var(--cfds-control-text) !important;
+        -webkit-text-fill-color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+        font-weight: 750 !important;
+        line-height: 1.55 !important;
+    }
+    [data-testid="stWidgetLabel"] p,
+    [data-testid="stSlider"] label,
+    [data-testid="stSlider"] label *,
+    [data-testid="stSlider"] * {
+        color: var(--cfds-control-text) !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSlider"] [data-testid="stTickBar"] * {
+        color: var(--cfds-control-muted) !important;
+    }
+
+    /* State pill: no cyan blob. Use dark pill with bright border. */
+    .cfds-state-pill {
+        background: #0E2B45 !important;
+        border: 1px solid rgba(56,213,255,.82) !important;
+        color: #EAFBFF !important;
+        -webkit-text-fill-color: #EAFBFF !important;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.05), 0 0 10px rgba(56,213,255,.12) !important;
+        text-shadow: none !important;
+    }
+
+    /* Wide replay controls: let the controls breathe and avoid white dropdowns. */
+    .cfds-wide-controls [data-testid="column"] { min-width: 0 !important; }
+    .cfds-wide-controls div[data-baseweb="select"] > div,
+    .cfds-wide-controls div[data-baseweb="select"] div {
+        background: #0E2B45 !important;
+        color: #EAFBFF !important;
+        border-color: rgba(56,213,255,.78) !important;
+    }
+
+    /* Sidebar: stack graph families cleanly and avoid text wrapping into unreadable columns. */
+    section[data-testid="stSidebar"] [data-testid="stCheckbox"] {
+        display: block !important;
+        margin: .34rem 0 !important;
+        padding: .08rem 0 !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stCheckbox"] p,
+    section[data-testid="stSidebar"] [data-testid="stRadio"] p {
+        font-size: .97rem !important;
+        line-height: 1.45 !important;
+    }
+
+    /* Animation feel selector emphasis */
+    .cfds-wide-controls [data-testid="stSelectbox"]:has(label) {
+        margin-bottom: .15rem !important;
+    }
+
+    @media (max-width: 760px) {
+        [data-testid="stFileUploader"] section { min-height: 86px !important; padding: .75rem !important; }
+        [data-testid="stFileUploaderFile"] { max-width: 100% !important; }
+        .cfds-wide-controls { display: block !important; }
+        .cfds-wide-controls [data-testid="column"] { width: 100% !important; margin-bottom: .85rem !important; }
+        section[data-testid="stSidebar"] { width: min(92vw, 390px) !important; }
+    }
     </style>
     """,
     unsafe_allow_html=True,
