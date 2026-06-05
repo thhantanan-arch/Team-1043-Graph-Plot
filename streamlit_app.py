@@ -317,7 +317,7 @@ st.markdown(
     .cfds-status-cell { border:1px solid rgba(148,163,184,.14); border-radius:12px; padding:.55rem; background:rgba(7,24,39,.48); }
     .cfds-status-cell span { display:block; color:#99b4c9; font-size:.68rem; letter-spacing:.09em; text-transform:uppercase; }
     .cfds-status-cell b { display:block; color:#eaffff; margin-top:.14rem; font-size:.95rem; }
-    .cfds-state-pill { display:inline-block; border-radius:999px; padding:.22rem .55rem; color:#06111f !important; background:#38d5ff; font-weight:900; font-size:.72rem; letter-spacing:.05em; }
+    .cfds-state-pill { display:inline-block; border-radius:999px; padding:.22rem .65rem; color:#EAFBFF !important; background:rgba(14,43,69,.82) !important; border:1px solid rgba(56,213,255,.72) !important; font-weight:900; font-size:.72rem; letter-spacing:.05em; box-shadow:0 0 0 1px rgba(0,0,0,.25) inset; }
     .cfds-graph-card { border:1px solid rgba(56,213,255,.18); background:linear-gradient(180deg, rgba(7,24,39,.74), rgba(5,11,18,.52)); border-radius:18px; padding:.75rem; }
     .cfds-graph-titlebar { display:flex; justify-content:space-between; align-items:center; gap:.7rem; padding:.2rem .25rem .6rem .25rem; }
     .cfds-graph-titlebar h3 { color:#38d5ff; margin:0; letter-spacing:.08em; text-transform:uppercase; font-size:1rem; }
@@ -1068,8 +1068,9 @@ def _replay_plot_data(df, graph_type: str):
 
     motion_mag_map = {
         "Acceleration magnitude": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Acceleration magnitude"),
-        "Gyro magnitude": (["GYRO_R", "GYRO_X", "GX"], ["GYRO_P", "GYRO_Y", "GY"], ["GYRO_Y", "GYRO_Z", "GZ"], "Gyro magnitude"),
-        "Tilt magnitude": (["TILT_R", "TILT_X", "ROLL"], ["TILT_P", "TILT_Y", "PITCH"], ["TILT_Y", "TILT_Z", "YAW"], "Tilt magnitude"),
+        "Gyro magnitude": (["GYRO_R", "GYRO_X", "GX", "GYRO_ROLL", "ANGULAR_VELOCITY_X", "OMEGA_X"], ["GYRO_P", "GYRO_Y", "GY", "GYRO_PITCH", "ANGULAR_VELOCITY_Y", "OMEGA_Y"], ["GYRO_YAW", "GYRO_Z", "GZ", "ANGULAR_VELOCITY_Z", "OMEGA_Z"], "Gyro magnitude (deg/s)"),
+        "Angular velocity magnitude": (["ANGULAR_VELOCITY_X", "OMEGA_X", "GYRO_X", "GX", "GYRO_R"], ["ANGULAR_VELOCITY_Y", "OMEGA_Y", "GYRO_Y", "GY", "GYRO_P"], ["ANGULAR_VELOCITY_Z", "OMEGA_Z", "GYRO_Z", "GZ", "GYRO_YAW"], "Angular velocity magnitude (deg/s)"),
+        "Tilt magnitude": (["TILT_ROLL_DERIVED", "TILT_ROLL", "ROLL_DEG", "ROLL", "TILT_R", "TILT_X"], ["TILT_PITCH_DERIVED", "TILT_PITCH", "PITCH_DEG", "PITCH", "TILT_P", "TILT_Y"], ["TILT_YAW_DERIVED", "TILT_YAW", "YAW_DEG", "YAW", "TILT_Z"], "Tilt magnitude (deg)"),
         # Backward compatibility.
         "Motion magnitude": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Motion magnitude"),
     }
@@ -1097,8 +1098,9 @@ def _motion_xyz_data(df, graph_type: str):
     import pandas as pd
     axis_sets = {
         "Acceleration XYZ": (["ACCEL_R", "ACCEL_X", "AX", "ACC_X"], ["ACCEL_P", "ACCEL_Y", "AY", "ACC_Y"], ["ACCEL_Y", "ACCEL_Z", "AZ", "ACC_Z"], "Acceleration"),
-        "Gyro XYZ": (["GYRO_R", "GYRO_X", "GX"], ["GYRO_P", "GYRO_Y", "GY"], ["GYRO_Y", "GYRO_Z", "GZ"], "Gyro"),
-        "Tilt XYZ": (["TILT_R", "TILT_X", "ROLL"], ["TILT_P", "TILT_Y", "PITCH"], ["TILT_Y", "TILT_Z", "YAW"], "Tilt"),
+        "Gyro XYZ": (["GYRO_R", "GYRO_X", "GX", "GYRO_ROLL", "ANGULAR_VELOCITY_X", "OMEGA_X"], ["GYRO_P", "GYRO_Y", "GY", "GYRO_PITCH", "ANGULAR_VELOCITY_Y", "OMEGA_Y"], ["GYRO_YAW", "GYRO_Z", "GZ", "ANGULAR_VELOCITY_Z", "OMEGA_Z"], "Gyro (deg/s)"),
+        "Angular velocity XYZ": (["ANGULAR_VELOCITY_X", "OMEGA_X", "GYRO_X", "GX", "GYRO_R"], ["ANGULAR_VELOCITY_Y", "OMEGA_Y", "GYRO_Y", "GY", "GYRO_P"], ["ANGULAR_VELOCITY_Z", "OMEGA_Z", "GYRO_Z", "GZ", "GYRO_YAW"], "Angular velocity (deg/s)"),
+        "Tilt XYZ": (["TILT_ROLL_DERIVED", "TILT_ROLL", "ROLL_DEG", "ROLL", "TILT_R", "TILT_X"], ["TILT_PITCH_DERIVED", "TILT_PITCH", "PITCH_DEG", "PITCH", "TILT_P", "TILT_Y"], ["TILT_YAW_DERIVED", "TILT_YAW", "YAW_DEG", "YAW", "TILT_Z"], "Tilt (deg)"),
     }
     if graph_type not in axis_sets:
         return None, "Unsupported motion XYZ graph."
@@ -1123,6 +1125,10 @@ def _gps_path_data(df):
         return None, "No GPS latitude/longitude columns found."
     d = pd.DataFrame({"t": df["__REPLAY_TIME_S"], "lat": lat, "lon": lon})
     d["alt"] = alt if alt_col is not None else 0.0
+    if "STATE" in df.columns:
+        d["STATE"] = df["STATE"].astype(str).to_numpy()
+    else:
+        d["STATE"] = "UNKNOWN"
     d = d.dropna(subset=["t", "lat", "lon"]).copy()
     d = d[(d["lat"].abs() > 0.0001) & (d["lon"].abs() > 0.0001)]
     if len(d) < 2:
@@ -1137,7 +1143,8 @@ def _gps_path_data(df):
     x_east = (lon_rad - lon0_rad) * np.cos(lat0_rad) * R
     y_north = (lat_rad - lat0_rad) * R
     z_alt = pd.to_numeric(d["alt"], errors="coerce").ffill().bfill().fillna(0).to_numpy(dtype=float)
-    return pd.DataFrame({"Mission time (s)": d["t"].to_numpy(dtype=float), "East (m)": x_east, "North (m)": y_north, "Altitude (m)": z_alt, "lat": d["lat"].to_numpy(dtype=float), "lon": d["lon"].to_numpy(dtype=float)}), "GPS path"
+    state_vals = [_normalize_replay_state(v) for v in d.get("STATE", ["UNKNOWN"] * len(d))]
+    return pd.DataFrame({"Mission time (s)": d["t"].to_numpy(dtype=float), "East (m)": x_east, "North (m)": y_north, "Altitude (m)": z_alt, "lat": d["lat"].to_numpy(dtype=float), "lon": d["lon"].to_numpy(dtype=float), "STATE": state_vals}), "GPS path"
 
 
 
@@ -1197,7 +1204,12 @@ V1256_LINE_COLORS = {
     "Pressure": "#ea580c",
     "GPS altitude": "#126FA3",
     "Motion magnitude": "#16a34a",
+    "Acceleration magnitude": "#22C55E",
+    "Gyro magnitude": "#60A5FA",
+    "Angular velocity magnitude": "#A78BFA",
+    "Tilt magnitude": "#F472B6",
 }
+
 
 
 def _normalize_replay_state(value: object) -> str:
@@ -1334,11 +1346,92 @@ def _state_legend_strip_html(full_df) -> str:
     parts.append('</div>')
     return ''.join(parts)
 
+
+
+def _display_unit_label(graph_type: str, label: str) -> str:
+    """Ensure axes always show units when the source label is generic."""
+    if "(" in str(label):
+        return str(label)
+    units = {
+        "Altitude": "Altitude (m)",
+        "GPS altitude": "GPS altitude (m)",
+        "Velocity / Descent rate": "Descent rate (m/s)",
+        "Voltage": "Voltage (V)",
+        "Current": "Current (A)",
+        "Temperature": "Temperature (°C)",
+        "Pressure": "Pressure (Pa / hPa)",
+        "Acceleration magnitude": "Acceleration magnitude (m/s²)",
+        "Gyro magnitude": "Gyro magnitude (deg/s)",
+        "Angular velocity magnitude": "Angular velocity magnitude (deg/s)",
+        "Tilt magnitude": "Tilt magnitude (deg)",
+    }
+    return units.get(graph_type, str(label))
+
+
+def _graph_metric_cards_html(plot_df, label: str, graph_type: str, full_df=None) -> str:
+    """Small insight cards to replace empty space with useful graph-specific data."""
+    try:
+        import numpy as np
+        import pandas as pd
+        d = plot_df.dropna().copy()
+        if d.empty or label not in d.columns:
+            return ""
+        x = pd.to_numeric(d["Mission time (s)"], errors="coerce")
+        y = pd.to_numeric(d[label], errors="coerce")
+        valid = x.notna() & y.notna()
+        x = x[valid].to_numpy(dtype=float)
+        y = y[valid].to_numpy(dtype=float)
+        if len(y) < 2:
+            return ""
+        cards = []
+        def card(k, v):
+            cards.append(f'<div class="cfds-insight-card"><span>{k}</span><b>{v}</b></div>')
+        if graph_type == "Voltage":
+            if len(y) >= 3:
+                coef = np.polyfit(x, y, 1)
+                pred = np.polyval(coef, x)
+                ss_res = float(np.sum((y - pred) ** 2))
+                ss_tot = float(np.sum((y - np.mean(y)) ** 2)) or 1.0
+                r2 = 1.0 - ss_res / ss_tot
+                card("R² trend", f"{r2:.3f}")
+            card("Voltage range", f"{np.nanmin(y):.2f}–{np.nanmax(y):.2f} V")
+            card("Latest", f"{y[-1]:.2f} V")
+        elif graph_type == "Temperature":
+            card("Temp range", f"{np.nanmin(y):.1f}–{np.nanmax(y):.1f} °C")
+            card("Latest", f"{y[-1]:.1f} °C")
+        elif graph_type == "Velocity / Descent rate":
+            good = np.sum((y >= 5) & (y <= 15))
+            pct = 100.0 * good / max(1, len(y))
+            card("AAS target band", "5–15 m/s")
+            card("In band", f"{pct:.0f}%")
+            card("Peak descent", f"{np.nanmax(y):.2f} m/s")
+        elif graph_type == "Altitude":
+            i = int(np.nanargmax(y))
+            card("Apogee", f"{y[i]:.1f} m @ {x[i]:.1f}s")
+            card("Landing est.", f"{x[-1]:.1f}s")
+        elif "GPS" in graph_type:
+            card("Path samples", f"{len(y)}")
+            card("Time span", f"{x[0]:.1f}–{x[-1]:.1f}s")
+        else:
+            card("Range", f"{np.nanmin(y):.2f}–{np.nanmax(y):.2f}")
+            card("Latest", f"{y[-1]:.2f}")
+        return '<div class="cfds-insight-strip">' + ''.join(cards) + '</div>'
+    except Exception:
+        return ""
+
 def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_time: float):
     import plotly.graph_objects as go
     x = plot_df["Mission time (s)"]
     y = plot_df[label]
+    axis_label = _display_unit_label(graph_type, label)
     fig = go.Figure()
+    if graph_type == "Velocity / Descent rate":
+        # AAS 2026 descent-rate target windows. Positive values mean descending.
+        # Container/parachute: 15 m/s +/- 3 => 12-18 m/s. Paraglider payload: 5 m/s +/- 3 => 2-8 m/s.
+        fig.add_hrect(y0=12, y1=18, fillcolor="#38BDF8", opacity=0.12, line_width=1.2, line_color="#7DD3FC", layer="below")
+        fig.add_hrect(y0=2, y1=8, fillcolor="#22C55E", opacity=0.13, line_width=1.2, line_color="#86EFAC", layer="below")
+        fig.add_hline(y=12, line_dash="dot", line_color="#7DD3FC", opacity=0.85, annotation_text="12-18 m/s container", annotation_position="top right")
+        fig.add_hline(y=8, line_dash="dot", line_color="#86EFAC", opacity=0.85, annotation_text="2-8 m/s payload", annotation_position="bottom right")
     events = _event_markers_for_replay(full_df)
     t_min = float(full_df["__REPLAY_TIME_S"].min())
     t_max = float(full_df["__REPLAY_TIME_S"].max())
@@ -1385,7 +1478,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
         hovermode="x unified",
     )
     fig.update_xaxes(title_text="Mission time (s)", title_standoff=28, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
-    fig.update_yaxes(title_text=label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+    fig.update_yaxes(title_text=axis_label, title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
     return fig
 
 
@@ -1646,9 +1739,21 @@ def _make_gps_xy_animation_fig(gps_df, full_df, frame_duration_ms: int = 40):
     pad_x = max(2, (float(np.max(x))-float(np.min(x))) * .08)
     pad_y = max(2, (float(np.max(y))-float(np.min(y))) * .08)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name="GPS XY path", line=dict(color="#66E8FF", width=3.4, shape="spline", smoothing=1.1), hovertemplate="East=%{x:.1f}m<br>North=%{y:.1f}m<extra></extra>"))
+    # State-colored GPS path segments. The path uses the same state colors as replay.
+    if "STATE" in d.columns:
+        states = d["STATE"].astype(str).to_numpy()[valid]
+    else:
+        states = np.array(["UNKNOWN"] * len(x))
+    start_i = 0
+    for i in range(1, len(x)+1):
+        if i == len(x) or states[i] != states[start_i]:
+            st_name = _normalize_replay_state(states[start_i])
+            seg_color = V1256_STATE_COLORS.get(st_name, "#66E8FF")
+            fig.add_trace(go.Scatter(x=x[start_i:i], y=y[start_i:i], mode="lines", name=V1256_STATE_SHORT_LABELS.get(st_name, st_name), line=dict(color=seg_color, width=4.0, shape="spline", smoothing=1.1), hovertemplate="East=%{x:.1f}m<br>North=%{y:.1f}m<extra></extra>", showlegend=True))
+            start_i = i
+    current_trace_index = len(fig.data)
     fig.add_trace(go.Scatter(x=[x[0]], y=[y[0]], mode="markers", name="Current", marker=dict(size=13, color="#EF4444", line=dict(color="white", width=1.5)), showlegend=False))
-    frames=[go.Frame(name=str(i), data=[go.Scatter(x=[x[i]], y=[y[i]])], traces=[1]) for i in range(len(x))]
+    frames=[go.Frame(name=str(i), data=[go.Scatter(x=[x[i]], y=[y[i]])], traces=[current_trace_index]) for i in range(len(x))]
     fig.frames=frames
     step_stride=max(1,len(x)//18)
     steps=[dict(method="animate",args=[[str(i)],{"mode":"immediate","frame":{"duration":0,"redraw":False},"transition":{"duration":0}}],label=f"{tt[i]:.0f}s") for i in range(0,len(x),step_stride)]
@@ -1667,7 +1772,17 @@ def _make_gps_xyz_fig(gps_df):
     if len(d) < 2:
         return None
     fig = go.Figure()
-    fig.add_trace(go.Scatter3d(x=d["East (m)"], y=d["North (m)"], z=d["Altitude (m)"], mode="lines+markers", name="GPS XYZ path", line=dict(color="#66E8FF", width=5), marker=dict(size=2, color=d["Mission time (s)"], colorscale="Turbo", opacity=0.75)))
+    if "STATE" in d.columns:
+        states = d["STATE"].astype(str).to_numpy()
+    else:
+        states = ["UNKNOWN"] * len(d)
+    start_i = 0
+    for i in range(1, len(d)+1):
+        if i == len(d) or states[i] != states[start_i]:
+            st_name = _normalize_replay_state(states[start_i])
+            seg = d.iloc[start_i:i]
+            fig.add_trace(go.Scatter3d(x=seg["East (m)"], y=seg["North (m)"], z=seg["Altitude (m)"], mode="lines+markers", name=V1256_STATE_SHORT_LABELS.get(st_name, st_name), line=dict(color=V1256_STATE_COLORS.get(st_name, "#66E8FF"), width=6), marker=dict(size=2.4, color=V1256_STATE_COLORS.get(st_name, "#66E8FF"), opacity=0.78)))
+            start_i = i
     fig.add_trace(go.Scatter3d(x=[d["East (m)"].iloc[0]], y=[d["North (m)"].iloc[0]], z=[d["Altitude (m)"].iloc[0]], mode="markers", name="Start", marker=dict(size=5,color="#22C55E")))
     fig.add_trace(go.Scatter3d(x=[d["East (m)"].iloc[-1]], y=[d["North (m)"].iloc[-1]], z=[d["Altitude (m)"].iloc[-1]], mode="markers", name="End", marker=dict(size=6,color="#EF4444")))
     fig.update_layout(title=None,height=680,margin=dict(l=0,r=0,t=32,b=0),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="#071B2A",font=dict(color="#DDEBFF",size=12),scene=dict(bgcolor="#071B2A",xaxis=dict(title="East (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),yaxis=dict(title="North (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),zaxis=dict(title="Altitude (m)",gridcolor="rgba(203,213,225,.15)",color="#DDEBFF"),aspectmode="data"),legend=dict(orientation="h",y=1.02,x=0.02,bgcolor="rgba(7,24,39,.65)"),uirevision="cfds_gps_xyz")
@@ -1700,6 +1815,166 @@ def _next_event_for_replay(df, t_now: float) -> str:
     except Exception:
         return "—"
 
+
+
+# --- Final rules patch: AAS 2026 velocity bands, CONOPS accuracy, multi-axis metrics ---
+def _conops_planned_altitude(t_values):
+    """Locked planned CONOPS profile: 681 m at 11.2 s, 80% release, 15/5 m/s descent."""
+    import numpy as np
+    t = np.asarray(t_values, dtype=float)
+    apogee_alt = 681.0
+    apogee_t = 11.2
+    release_alt = apogee_alt * 0.80
+    release_t = apogee_t + (apogee_alt - release_alt) / 15.0
+    egg_alt = 2.0
+    egg_t = release_t + (release_alt - egg_alt) / 5.0
+    land_t = egg_t + egg_alt / 5.0
+    out = np.zeros_like(t, dtype=float)
+    # ascent
+    m = t <= apogee_t
+    out[m] = np.interp(t[m], [0.0, apogee_t], [0.0, apogee_alt])
+    # container descent
+    m = (t > apogee_t) & (t <= release_t)
+    out[m] = apogee_alt - 15.0 * (t[m] - apogee_t)
+    # payload paraglider descent
+    m = (t > release_t) & (t <= land_t)
+    out[m] = release_alt - 5.0 * (t[m] - release_t)
+    out[t > land_t] = 0.0
+    return np.clip(out, 0.0, None)
+
+
+def _conops_actual_planned_df(df):
+    """Build Actual vs Planned CONOPS dataframe from replay altitude."""
+    import pandas as pd
+    alt_col, alt = _numeric_series(df, ["ALTITUDE", "ALT", "ALTITUDE_M", "BARO_ALTITUDE", "GPS_ALT", "GPS_ALTITUDE", "GPS_ALTITUDE_M"])
+    if alt_col is None:
+        return None, "No usable altitude column found for CONOPS accuracy."
+    t = pd.to_numeric(df["__REPLAY_TIME_S"], errors="coerce")
+    d = pd.DataFrame({"Mission time (s)": t, "Actual altitude (m)": alt}).dropna()
+    if len(d) < 3:
+        return None, "CONOPS accuracy needs at least three altitude samples."
+    d = d.sort_values("Mission time (s)").drop_duplicates("Mission time (s)")
+    d["Planned CONOPS (m)"] = _conops_planned_altitude(d["Mission time (s)"].to_numpy(dtype=float))
+    return d, "Actual altitude (m)"
+
+
+_old_replay_plot_data_final = _replay_plot_data
+def _replay_plot_data(df, graph_type: str):
+    # Add CONOPS option, then fall back to the existing resilient replay data selector.
+    if graph_type == "CONOPS accuracy":
+        return _conops_actual_planned_df(df)
+    return _old_replay_plot_data_final(df, graph_type)
+
+
+_old_graph_metric_cards_html_final = _graph_metric_cards_html
+def _graph_metric_cards_html(plot_df, label: str, graph_type: str, full_df=None) -> str:
+    """Final metric cards: velocity bands per AAS 2026, CONOPS accuracy, XYZ min/max/range."""
+    try:
+        import numpy as np
+        import pandas as pd
+        d = plot_df.dropna().copy()
+        if d.empty:
+            return ""
+        cards = []
+        def card(k, v):
+            cards.append(f'<div class="cfds-insight-card"><span>{k}</span><b>{v}</b></div>')
+
+        if graph_type == "CONOPS accuracy" and {"Actual altitude (m)", "Planned CONOPS (m)", "Mission time (s)"}.issubset(d.columns):
+            x = pd.to_numeric(d["Mission time (s)"], errors="coerce")
+            actual = pd.to_numeric(d["Actual altitude (m)"], errors="coerce")
+            planned = pd.to_numeric(d["Planned CONOPS (m)"], errors="coerce")
+            valid = x.notna() & actual.notna() & planned.notna()
+            actual = actual[valid].to_numpy(dtype=float)
+            planned = planned[valid].to_numpy(dtype=float)
+            x = x[valid].to_numpy(dtype=float)
+            if len(actual) >= 3:
+                diff = np.abs(actual - planned)
+                scale = max(1.0, float(np.nanmax(planned)), float(np.nanmax(actual)))
+                accuracy = max(0.0, 100.0 * (1.0 - float(np.nanmean(diff)) / scale))
+                ia = int(np.nanargmax(actual)); ip = int(np.nanargmax(planned))
+                card("CONOPS accuracy", f"{accuracy:.2f}%")
+                card("Avg |Actual-Planned|", f"{float(np.nanmean(diff)):.2f} m")
+                card("Apogee Δ", f"{actual[ia]-planned[ip]:+.1f} m")
+                card("Actual apogee", f"{actual[ia]:.1f} m @ {x[ia]:.1f}s")
+            return '<div class="cfds-insight-strip">' + ''.join(cards) + '</div>'
+
+        # Multi-axis: X/Y/Z metrics even when label is not a dataframe column.
+        if {"X", "Y", "Z", "Mission time (s)"}.issubset(d.columns):
+            import numpy as np
+            vals = {}
+            for axis in ["X", "Y", "Z"]:
+                arr = pd.to_numeric(d[axis], errors="coerce").dropna().to_numpy(dtype=float)
+                if len(arr):
+                    vals[axis] = (float(np.nanmin(arr)), float(np.nanmax(arr)), float(np.nanmax(arr)-np.nanmin(arr)))
+            if vals:
+                for axis, (mn, mx, rg) in vals.items():
+                    card(f"{axis} min/max", f"{mn:.2f} / {mx:.2f}")
+                mag = (pd.to_numeric(d["X"], errors="coerce")**2 + pd.to_numeric(d["Y"], errors="coerce")**2 + pd.to_numeric(d["Z"], errors="coerce")**2) ** 0.5
+                card("Magnitude max", f"{float(np.nanmax(mag)):.2f}")
+                return '<div class="cfds-insight-strip">' + ''.join(cards) + '</div>'
+
+        if graph_type == "Velocity / Descent rate" and label in d.columns:
+            y = pd.to_numeric(d[label], errors="coerce").dropna().to_numpy(dtype=float)
+            if len(y):
+                container_pct = 100.0 * float(np.sum((y >= 12) & (y <= 18))) / len(y)
+                payload_pct = 100.0 * float(np.sum((y >= 2) & (y <= 8))) / len(y)
+                card("AAS container band", "12–18 m/s")
+                card("AAS payload band", "2–8 m/s")
+                card("Container in-band", f"{container_pct:.0f}%")
+                card("Payload in-band", f"{payload_pct:.0f}%")
+                card("Peak descent", f"{float(np.nanmax(y)):.2f} m/s")
+                return '<div class="cfds-insight-strip">' + ''.join(cards) + '</div>'
+
+        return _old_graph_metric_cards_html_final(plot_df, label, graph_type, full_df)
+    except Exception:
+        try:
+            return _old_graph_metric_cards_html_final(plot_df, label, graph_type, full_df)
+        except Exception:
+            return ""
+
+
+_old_make_v1256_replay_fig_final = _make_v1256_replay_fig
+def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_time: float):
+    import plotly.graph_objects as go
+    import numpy as np
+    if graph_type == "CONOPS accuracy":
+        d = plot_df.dropna(subset=["Mission time (s)", "Actual altitude (m)", "Planned CONOPS (m)"]).copy()
+        if d.empty:
+            return None
+        fig = go.Figure()
+        for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
+            fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)), line_width=1.7, line_color=border)
+            fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
+        fig.add_trace(go.Scatter(x=d["Mission time (s)"], y=d["Planned CONOPS (m)"], mode="lines", name="Planned CONOPS", line=dict(color="#CBD5E1", width=2.6, dash="dash")))
+        fig.add_trace(go.Scatter(x=d["Mission time (s)"], y=d["Actual altitude (m)"], mode="lines", name="Actual CONOPS", line=dict(color="#66E8FF", width=3.4, shape="spline", smoothing=1.15)))
+        now_alt = np.interp(frame_time, d["Mission time (s)"], d["Actual altitude (m)"])
+        fig.add_trace(go.Scatter(x=[frame_time], y=[now_alt], mode="markers", name="Current point", marker=dict(size=11, color="#EF4444", line=dict(color="white", width=1.6))))
+        fig.add_vline(x=frame_time, line_width=2, line_color="#EAFBFF", line_dash="dash")
+        fig.update_layout(title=None, height=500, margin=dict(l=62, r=24, t=44, b=48), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#071B2A", font=dict(color="#DDEBFF", size=12), showlegend=True, legend=dict(orientation="h", y=1.04, x=0.02, bgcolor="rgba(7,24,39,.72)"), hovermode="x unified")
+        fig.update_xaxes(title_text="Mission time (s)", title_standoff=28, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+        fig.update_yaxes(title_text="Altitude (m)", title_standoff=12, gridcolor="rgba(203,213,225,.14)", zeroline=False, linecolor="rgba(56,213,255,.45)", mirror=True, linewidth=1.2)
+        return fig
+    fig = _old_make_v1256_replay_fig_final(plot_df, label, full_df, graph_type, frame_time)
+    return fig
+
+
+_old_make_v1256_replay_animation_fig_final = _make_v1256_replay_animation_fig
+def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: str, trail_mode: str, frame_duration_ms: int = 40):
+    import plotly.graph_objects as go
+    import numpy as np
+    if graph_type == "CONOPS accuracy":
+        return _make_v1256_replay_fig(plot_df, label, full_df, graph_type, float(plot_df["Mission time (s)"].iloc[min(len(plot_df)-1, max(0, len(plot_df)//3))]))
+    fig = _old_make_v1256_replay_animation_fig_final(plot_df, label, full_df, graph_type, trail_mode, frame_duration_ms)
+    if fig is not None and graph_type == "Velocity / Descent rate":
+        # Add AAS 2026 target windows to the animated descent graph too.
+        fig.add_hrect(y0=12, y1=18, fillcolor="#38BDF8", opacity=0.12, line_width=1.2, line_color="#7DD3FC", layer="below")
+        fig.add_hrect(y0=2, y1=8, fillcolor="#22C55E", opacity=0.13, line_width=1.2, line_color="#86EFAC", layer="below")
+        fig.add_hline(y=12, line_dash="dot", line_color="#7DD3FC", opacity=0.85)
+        fig.add_hline(y=18, line_dash="dot", line_color="#7DD3FC", opacity=0.85)
+        fig.add_hline(y=2, line_dash="dot", line_color="#86EFAC", opacity=0.85)
+        fig.add_hline(y=8, line_dash="dot", line_color="#86EFAC", opacity=0.85)
+        fig.update_yaxes(title_text="Descent rate (m/s)")
+    return fig
 
 def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     '''Wide V12.56 replay dashboard: graph first, controls above/below, no left rail.'''
@@ -1737,9 +2012,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         ''', unsafe_allow_html=True)
 
     graph_options = [
-        "Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current",
+        "Altitude", "Velocity / Descent rate", "CONOPS accuracy", "Voltage", "Temperature", "Pressure", "Current",
         "GPS altitude", "GPS XY path", "GPS XYZ path", "GPS map path",
-        "Acceleration magnitude", "Acceleration XYZ", "Gyro magnitude", "Gyro XYZ", "Tilt magnitude", "Tilt XYZ",
+        "Acceleration magnitude", "Acceleration XYZ",
+        "Gyro magnitude", "Gyro XYZ", "Angular velocity magnitude", "Angular velocity XYZ",
+        "Tilt magnitude", "Tilt XYZ",
     ]
     speed_options = ["0.5x", "1x", "2x", "5x", "10x"]
     trail_options = ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"]
@@ -1815,7 +2092,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    st.markdown('<div class="cfds-graph-card cfds-graph-card-wide"><div class="cfds-graph-titlebar"><h3>'+graph_type+' vs Time</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="cfds-graph-titlebar cfds-graph-titlebar-only"><h3>'+graph_type+' vs Time</h3></div>', unsafe_allow_html=True)
 
     if replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
         fig = None
@@ -1824,7 +2101,6 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             gps_df, msg = _gps_path_data(replay_df)
             if gps_df is None:
                 st.info(msg)
-                st.markdown('</div></div>', unsafe_allow_html=True)
                 return
             fig = _make_gps_xy_animation_fig(gps_df, replay_df, frame_duration_ms=frame_duration)
             show_state_legend = False
@@ -1832,27 +2108,23 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             gps_df, msg = _gps_path_data(replay_df)
             if gps_df is None:
                 st.info(msg)
-                st.markdown('</div></div>', unsafe_allow_html=True)
                 return
             fig = _make_gps_xyz_fig(gps_df)
             show_state_legend = False
-        elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Tilt XYZ"):
+        elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Angular velocity XYZ", "Tilt XYZ"):
             plot_df, label = _motion_xyz_data(replay_df, graph_type)
             if plot_df is None:
                 st.info(label)
-                st.markdown('</div></div>', unsafe_allow_html=True)
                 return
             fig = _make_v1256_multitrace_animation_fig(plot_df, label, replay_df, graph_type, frame_duration_ms=frame_duration)
         else:
             plot_df, label = _replay_plot_data(replay_df, graph_type)
             if plot_df is None:
                 st.info(label)
-                st.markdown('</div></div>', unsafe_allow_html=True)
                 return
             fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
         if fig is None:
             st.info("Not enough data to create this replay. Try another graph or Manual scrub fallback.")
-            st.markdown('</div></div>', unsafe_allow_html=True)
             return
         fig.update_layout(dragmode="pan")
         st.plotly_chart(
@@ -1867,6 +2139,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
             },
         )
+        if graph_type not in ("GPS XY path", "GPS XYZ path", "GPS map path"):
+            try:
+                st.markdown(_graph_metric_cards_html(plot_df, label, graph_type, replay_df), unsafe_allow_html=True)
+            except Exception:
+                pass
         if show_state_legend:
             st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
             chips = []
@@ -1875,8 +2152,6 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             if chips:
                 st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
         st.markdown('<div class="cfds-replay-tipbar">GPS XY/XYZ and split motion graphs are now separated. Use embedded ▶ Play / ⏸ Pause for smooth replay; use Plotly reset axes after zoom/pan.</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     if replay_engine == "Smooth browser animation" and graph_type == "GPS map path":
@@ -1951,7 +2226,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True})
             else:
                 chart_slot.info("GPS XYZ path needs more valid points.")
-    elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Tilt XYZ"):
+    elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Angular velocity XYZ", "Tilt XYZ"):
         plot_df, label = _motion_xyz_data(sub, graph_type)
         if plot_df is None:
             chart_slot.info(label)
@@ -1980,8 +2255,6 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
     if chips:
         st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def quick_data_diagnostics(input_path: Path) -> dict:
     try:
@@ -2123,6 +2396,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+# Mascot card: Elfaria Albis Serfort. Keep small so it does not create empty layout gaps.
+_mascot_path = Path(__file__).with_name("elfaria_mascot.png")
+if _mascot_path.exists():
+    with st.expander("CFDS Mascot", expanded=False):
+        c_m1, c_m2 = st.columns([1, 3])
+        with c_m1:
+            st.image(str(_mascot_path), use_container_width=True)
+        with c_m2:
+            st.markdown("**Elfaria Albis Serfort** — Daedalus CFDS assistant mascot.")
+            st.caption("Used only as a lightweight app identity panel so it does not slow down graph replay.")
+
 st.markdown('<div class="cfds-panel"><div class="cfds-panel-title">Mission input</div>', unsafe_allow_html=True)
 uploaded = None
 if not use_demo:
@@ -2192,6 +2477,24 @@ if st.session_state.get("cfds_last_export") is not None:
     show_previews_from_payload(st.session_state["cfds_last_export"], max_preview, show_full_png, show_all_folders)
     render_flight_replay(st.session_state["cfds_last_export"], mobile_fast=mobile_fast)
     show_export_center(st.session_state["cfds_last_export"])
+
+
+
+# Utility deck: quick calculator for mission math without leaving the web app.
+with st.expander("🧮 Mission calculator", expanded=False):
+    st.caption("Safe calculator for quick engineering checks. Examples: 681*0.8, (733.4-432)/15, sqrt(2*9.81*10).")
+    expr = st.text_input("Expression", value="681*0.8", key="cfds_calc_expr")
+    allowed_names = {
+        "sqrt": __import__("math").sqrt, "sin": __import__("math").sin, "cos": __import__("math").cos,
+        "tan": __import__("math").tan, "log": __import__("math").log, "log10": __import__("math").log10,
+        "pi": __import__("math").pi, "e": __import__("math").e, "abs": abs, "round": round,
+        "min": min, "max": max, "pow": pow,
+    }
+    try:
+        result = eval(expr, {"__builtins__": {}}, allowed_names)
+        st.success(f"= {result}")
+    except Exception as exc:
+        st.info(f"Enter a valid expression. ({exc})")
 
 st.divider()
 st.caption("CFDS Web keeps the original graph engine, but uses a mobile-optimized browser interface for iPhone/iPad/desktop.")
@@ -2920,3 +3223,173 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+# --- CFDS FINAL NO-WHITE / NO-EMPTY / INSIGHT POLISH OVERRIDE ---
+st.markdown(
+    """
+    <style>
+    /* No white widget boxes: selectbox, dropdown, uploader chips, and buttons stay dark HUD. */
+    [data-baseweb="select"] > div,
+    [data-baseweb="select"] div,
+    [data-baseweb="input"] input,
+    [data-testid="stFileUploaderFile"],
+    [data-testid="stFileUploaderFile"] *,
+    div[data-testid="stFileUploader"] li,
+    div[data-testid="stFileUploader"] li *,
+    div[data-testid="stFileUploader"] section div[role="button"],
+    div[data-testid="stFileUploader"] section div[role="button"] * {
+        background: #0B2136 !important;
+        color: #EAFBFF !important;
+        border-color: rgba(56,213,255,.46) !important;
+        opacity: 1 !important;
+        text-shadow: none !important;
+    }
+    [data-baseweb="select"] svg,
+    [data-testid="stFileUploader"] svg { color:#38D5FF !important; fill:#38D5FF !important; }
+    [data-baseweb="popover"], [data-baseweb="popover"] *, [data-baseweb="menu"], [data-baseweb="menu"] * {
+        background: #071827 !important; color:#EAFBFF !important; opacity:1 !important;
+    }
+    [data-baseweb="menu"] li:hover { background:#0E2B45 !important; }
+
+    /* White checkbox squares are allowed as controls, but selected/labels must be high contrast. */
+    [data-testid="stCheckbox"] label p, [data-testid="stRadio"] label p { color:#EAFBFF !important; font-weight:750 !important; }
+
+    /* Hide truly empty decorative panels/containers that create wasted blank gaps. */
+    .cfds-panel:empty, .cfds-card:empty, .cfds-graph-card:empty,
+    div[data-testid="stVerticalBlock"] > div:empty { display:none !important; min-height:0 !important; padding:0 !important; margin:0 !important; }
+
+    .cfds-insight-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:.55rem; margin:.7rem .15rem .25rem .15rem; }
+    .cfds-insight-card { border:1px solid rgba(56,213,255,.26); background:rgba(7,24,39,.82); border-radius:12px; padding:.58rem .68rem; }
+    .cfds-insight-card span { display:block; color:#9DB7C9 !important; font-size:.66rem; letter-spacing:.10em; text-transform:uppercase; font-weight:900; }
+    .cfds-insight-card b { display:block; color:#EAFBFF !important; margin-top:.16rem; font-size:.92rem; }
+
+    .cfds-state-pill { color:#EAFBFF !important; background:rgba(14,43,69,.92) !important; border:1px solid rgba(56,213,255,.72) !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
+
+# --- CLEAN STREAMLIT REBUILD POLISH: one final policy layer, no open wrappers ---
+st.markdown(
+    """
+    <style>
+    /* 1) No white input/select/uploader boxes anywhere in the app. */
+    [data-testid="stFileUploader"],
+    [data-testid="stFileUploader"] section,
+    [data-testid="stFileUploaderDropzone"],
+    [data-testid="stFileUploaderFile"],
+    [data-testid="stFileUploaderFile"] *,
+    [data-baseweb="select"] > div,
+    [data-baseweb="select"] div,
+    [data-baseweb="input"] > div,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] > div,
+    [data-baseweb="textarea"] textarea {
+        background: #0B2136 !important;
+        color: #EAFBFF !important;
+        -webkit-text-fill-color: #EAFBFF !important;
+        border-color: rgba(56,213,255,.58) !important;
+        opacity: 1 !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+    }
+    [data-baseweb="select"] svg,
+    [data-testid="stFileUploader"] svg,
+    [data-testid="stFileUploaderDropzone"] svg {
+        color: #38D5FF !important;
+        fill: #38D5FF !important;
+        opacity: 1 !important;
+    }
+    [data-baseweb="popover"], [data-baseweb="popover"] *,
+    [data-baseweb="menu"], [data-baseweb="menu"] *,
+    ul[role="listbox"], ul[role="listbox"] * {
+        background: #071827 !important;
+        color: #EAFBFF !important;
+        -webkit-text-fill-color: #EAFBFF !important;
+        opacity: 1 !important;
+    }
+    [data-baseweb="menu"] li:hover, ul[role="listbox"] li:hover {
+        background: #0E2B45 !important;
+    }
+
+    /* 2) Keep checkbox/radio labels readable but allow the small square indicator. */
+    [data-testid="stCheckbox"] label p,
+    [data-testid="stRadio"] label p,
+    [data-testid="stSlider"] label p,
+    [data-testid="stSelectbox"] label p,
+    [data-testid="stTextInput"] label p,
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary * {
+        color: #EAFBFF !important;
+        opacity: 1 !important;
+        font-weight: 760 !important;
+        line-height: 1.45 !important;
+    }
+
+    /* 3) No empty boxes: the replay graph no longer uses an open div wrapper. */
+    .cfds-graph-titlebar-only {
+        border: 1px solid rgba(56,213,255,.30);
+        background: rgba(7,24,39,.88);
+        border-radius: 14px;
+        padding: .72rem .95rem;
+        margin: .85rem 0 .45rem 0;
+    }
+    .cfds-graph-titlebar-only h3 {
+        margin: 0 !important;
+        color: #EAFBFF !important;
+        letter-spacing: .10em !important;
+        font-size: clamp(1.02rem, 1.35vw, 1.24rem) !important;
+    }
+    .cfds-panel:empty, .cfds-card:empty, .cfds-graph-card:empty,
+    div[data-testid="stVerticalBlock"] > div:empty {
+        display: none !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: 0 !important;
+    }
+
+    /* 4) Metric cards replace blank space under each graph. */
+    .cfds-insight-strip {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important;
+        gap: .58rem !important;
+        margin: .76rem .10rem .35rem .10rem !important;
+    }
+    .cfds-insight-card {
+        background: rgba(7,24,39,.86) !important;
+        border: 1px solid rgba(56,213,255,.28) !important;
+        border-radius: 12px !important;
+        padding: .62rem .70rem !important;
+    }
+    .cfds-insight-card span {
+        color: #9DB7C9 !important;
+        font-size: .66rem !important;
+        letter-spacing: .11em !important;
+        text-transform: uppercase !important;
+        font-weight: 900 !important;
+    }
+    .cfds-insight-card b { color: #EAFBFF !important; font-size: .92rem !important; }
+
+    /* 5) Phone layout: no weird wrapped two-column labels. */
+    @media (max-width: 760px) {
+        .block-container { padding-left: .82rem !important; padding-right: .82rem !important; }
+        .cfds-wide-status-strip { grid-template-columns: 1fr 1fr !important; }
+        .cfds-wide-controls [data-testid="column"] { width: 100% !important; margin-bottom: .80rem !important; }
+        .cfds-state-strip { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        .cfds-event-strip-wide { grid-template-columns: 1fr 1fr !important; }
+        [data-testid="stFileUploaderFile"] { max-width: 100% !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+CLEAN_REBUILD_POLICY_NOTE = "Clean rebuild layer: no white controls, no open HTML wrappers, AAS 2026 descent bands, CONOPS accuracy, GPS XY/XYZ, split motion, metric cards."
+
+# FINAL_VISIBILITY_POLICY_NOTE = "No white controls, no empty cards, AAS 2026 bands 12-18 and 2-8, CONOPS planned-vs-actual accuracy, XYZ min/max/range cards."
