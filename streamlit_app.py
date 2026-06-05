@@ -13,6 +13,7 @@ from pathlib import Path
 from io import BytesIO
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Make matplotlib safe on headless web hosts.
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -932,6 +933,154 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
     return fig
 
 
+
+
+def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: str, trail_mode: str, frame_duration_ms: int = 40):
+    """Create browser-side Plotly animation so Play runs on iPhone without Streamlit rerun loops."""
+    import plotly.graph_objects as go
+    import pandas as pd
+
+    if plot_df is None or plot_df.empty:
+        return None
+    plot_df = plot_df.dropna().reset_index(drop=True)
+    if plot_df.empty:
+        return None
+
+    x_all = pd.to_numeric(plot_df["Mission time (s)"], errors="coerce").to_numpy()
+    y_all = pd.to_numeric(plot_df[label], errors="coerce").to_numpy()
+    valid = ~(pd.isna(x_all) | pd.isna(y_all))
+    x_all = x_all[valid]
+    y_all = y_all[valid]
+    if len(x_all) < 2:
+        return None
+
+    y_min = float(pd.Series(y_all).min())
+    y_max = float(pd.Series(y_all).max())
+    if y_min == y_max:
+        y_min -= 1.0
+        y_max += 1.0
+    pad = (y_max - y_min) * 0.08
+    y0, y1 = y_min - pad, y_max + pad
+
+    def window_arrays(idx: int):
+        idx = max(0, min(int(idx), len(x_all) - 1))
+        if trail_mode == "Full trail":
+            start = 0
+        else:
+            try:
+                seconds = float(trail_mode.split()[1])
+            except Exception:
+                seconds = 30.0
+            start = int(pd.Series(x_all).searchsorted(x_all[idx] - seconds, side="left"))
+        return x_all[start:idx + 1], y_all[start:idx + 1]
+
+    line_color = "#0077A7"
+    if "Velocity" in graph_type:
+        line_color = "#1d4ed8"
+    elif graph_type in {"Voltage", "Current"}:
+        line_color = "#7c3aed"
+    elif graph_type in {"Temperature", "Pressure"}:
+        line_color = "#ea580c"
+    elif graph_type == "Motion magnitude":
+        line_color = "#16a34a"
+
+    xs0, ys0 = window_arrays(0)
+    fig = go.Figure(
+        data=[
+            go.Scatter(x=xs0, y=ys0, mode="lines", name=label,
+                       line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
+                       fill="tozeroy" if graph_type == "Altitude" else None,
+                       fillcolor="rgba(0,119,167,.08)" if graph_type == "Altitude" else None),
+            go.Scatter(x=[x_all[0]], y=[y_all[0]], mode="markers", name="Current point",
+                       marker=dict(size=12, color="#ef4444", line=dict(color="white", width=1.6))),
+            go.Scatter(x=[x_all[0], x_all[0]], y=[y0, y1], mode="lines", name="Time cursor",
+                       line=dict(color="#111827", width=2, dash="dash"), hoverinfo="skip"),
+        ]
+    )
+
+    # Static V12.56-style stage bands and inferred event markers.
+    events = _event_markers_for_replay(full_df)
+    t_min = float(full_df["__REPLAY_TIME_S"].min())
+    t_max = float(full_df["__REPLAY_TIME_S"].max())
+    for x0, x1, name, color in _v1256_stage_rects(t_min, t_max, events):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=1, line_width=0,
+                      annotation_text=name, annotation_position="top left",
+                      annotation_font_size=10, annotation_font_color="#334155")
+    for tx, name, color in events:
+        fig.add_vline(x=tx, line_width=1, line_color=color, line_dash="dot")
+        fig.add_annotation(x=tx, y=y1, text=name, showarrow=False, yanchor="bottom",
+                           font=dict(size=10, color="#111827"), bgcolor="rgba(255,255,255,.62)")
+
+    frames = []
+    # Keep frame count bounded by the already-downsampled replay_df length.
+    for i in range(len(x_all)):
+        xs, ys = window_arrays(i)
+        frames.append(go.Frame(
+            name=str(i),
+            data=[
+                go.Scatter(x=xs, y=ys),
+                go.Scatter(x=[x_all[i]], y=[y_all[i]]),
+                go.Scatter(x=[x_all[i], x_all[i]], y=[y0, y1]),
+            ],
+            traces=[0, 1, 2],
+        ))
+    fig.frames = frames
+
+    steps = []
+    # Use sparse slider steps so the figure does not become too heavy on iPhone.
+    step_stride = max(1, len(x_all) // 20)
+    for i in range(0, len(x_all), step_stride):
+        steps.append(dict(
+            method="animate",
+            args=[[str(i)], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}, "transition": {"duration": 0}}],
+            label=f"{x_all[i]:.0f}s",
+        ))
+
+    fig.update_layout(
+        title=dict(text=f"{graph_type} Replay", x=0.02, y=0.96, font=dict(size=18, color="#111827")),
+        height=470,
+        margin=dict(l=58, r=28, t=66, b=72),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#F7FCFF",
+        font=dict(color="#111827", size=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor="rgba(255,255,255,.72)"),
+        hovermode="x unified",
+        yaxis=dict(range=[y0, y1]),
+        updatemenus=[dict(
+            type="buttons",
+            direction="left",
+            x=0.01,
+            y=1.17,
+            xanchor="left",
+            yanchor="top",
+            showactive=False,
+            bgcolor="rgba(255,255,255,.92)",
+            bordercolor="rgba(17,24,39,.35)",
+            borderwidth=1,
+            pad={"r": 8, "t": 4},
+            buttons=[
+                dict(label="▶ Play", method="animate",
+                     args=[None, {"fromcurrent": True, "frame": {"duration": frame_duration_ms, "redraw": False}, "transition": {"duration": 0}, "mode": "immediate"}]),
+                dict(label="⏸ Pause", method="animate",
+                     args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}]),
+            ],
+        )],
+        sliders=[dict(
+            active=0,
+            x=0.02,
+            y=-0.13,
+            len=0.94,
+            xanchor="left",
+            yanchor="top",
+            pad=dict(t=10, b=0),
+            currentvalue=dict(prefix="t = ", suffix="", font=dict(size=12, color="#111827")),
+            steps=steps,
+        )],
+    )
+    fig.update_xaxes(title_text="Mission time (s)", gridcolor="rgba(100,116,139,.22)", zeroline=False, linecolor="#64748b", mirror=True)
+    fig.update_yaxes(title_text=label, gridcolor="rgba(100,116,139,.24)", zeroline=False, linecolor="#64748b", mirror=True)
+    return fig
+
 def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     """V12.56-style phone-friendly log replay."""
     st.markdown('<a id="replay"></a><div class="cfds-panel"><div class="cfds-panel-title">Flight replay deck</div>', unsafe_allow_html=True)
@@ -966,6 +1115,61 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         st.warning("No replay data after downsampling.")
         st.markdown('</div>', unsafe_allow_html=True)
         return
+
+    replay_engine = st.radio(
+        "Replay engine",
+        ["Smooth browser animation", "Manual scrub fallback"],
+        index=0,
+        horizontal=True,
+        key="replay_engine_mode",
+        help="Smooth mode uses Plotly's browser-side animation, so Play runs inside the chart without Streamlit rerunning every frame.",
+    )
+
+    speed_to_duration = {"1x": 80, "2x": 50, "5x": 24, "10x": 14}
+    frame_duration = speed_to_duration.get(speed, 40)
+
+    if replay_engine == "Smooth browser animation" and graph_type != "GPS path":
+        plot_df, label = _replay_plot_data(replay_df, graph_type)
+        if plot_df is None:
+            st.info(label)
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        fig = _make_v1256_replay_animation_fig(plot_df, label, replay_df, graph_type, trail_mode, frame_duration_ms=frame_duration)
+        if fig is None:
+            st.info("Not enough numeric data to create browser-side animation. Try Manual scrub fallback.")
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        st.markdown(
+            '<div class="cfds-mobile-note">Browser-side animation mode: use the ▶ Play / ⏸ Pause controls embedded inside the chart. This avoids Streamlit button reruns and is smoother on iPhone.</div>',
+            unsafe_allow_html=True,
+        )
+        # Render Plotly as standalone HTML instead of st.plotly_chart.
+        # This makes the Plotly animation buttons respond directly in the browser/iframe,
+        # avoiding Streamlit widget reruns and iPhone tap-state issues.
+        try:
+            from plotly.io import to_html
+            html = to_html(
+                fig,
+                include_plotlyjs="cdn",
+                full_html=False,
+                config={
+                    "responsive": True,
+                    "displayModeBar": False,
+                    "scrollZoom": False,
+                },
+            )
+            components.html(
+                f'<div style="width:100%; min-width:0;">{html}</div>',
+                height=590,
+                scrolling=False,
+            )
+        except Exception:
+            st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False, "responsive": True})
+        st.markdown('</div>', unsafe_allow_html=True)
+        return
+
+    if replay_engine == "Smooth browser animation" and graph_type == "GPS path":
+        st.info("GPS path still uses Manual scrub fallback for now because Streamlit map playback is not browser-animated yet.")
 
     total_frames = len(replay_df)
     if "replay_frame" not in st.session_state:
