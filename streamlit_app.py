@@ -1064,14 +1064,15 @@ V1256_EXPECTED_STATES = [
 # are remapped to separated dark-safe hues. State logic is unchanged; only
 # the visual palette is adapted so adjacent bands do not collapse into gray.
 V1256_STATE_COLORS = {
-    "LAUNCH_PAD": "#E11D48",      # rose / pad
-    "ASCENT": "#0284C7",          # blue / climb
-    "BURNOUT": "#FACC15",         # yellow / transition
-    "APOGEE": "#16A34A",          # green / peak
-    "DESCENT": "#7C3AED",         # violet / descent
-    "PROBE_RELEASE": "#CA8A04",   # amber / probe
-    "PAYLOAD_RELEASE": "#EA580C", # orange / payload
-    "LANDED": "#64748B",          # slate / landed
+    # Butter/readable dark-mode palette: distinct hue per state, lower mud on dark graph.
+    "LAUNCH_PAD": "#FF3B6B",      # rose / pad
+    "ASCENT": "#00B8FF",          # bright blue / climb
+    "BURNOUT": "#FFE66D",         # yellow / transition
+    "APOGEE": "#32E875",          # green / peak
+    "DESCENT": "#9B5CFF",         # violet / descent
+    "PROBE_RELEASE": "#FFD23F",   # amber / probe
+    "PAYLOAD_RELEASE": "#FF7A1A", # orange / payload
+    "LANDED": "#A8B3C7",          # slate / landed
 }
 V1256_STATE_DISPLAY = {
     "LAUNCH_PAD": "LAUNCH_PAD",
@@ -1093,17 +1094,17 @@ V1256_STATE_SHORT_LABELS = {
     "LANDED": "LANDED",
 }
 V1256_STATE_BORDERS = {
-    "LAUNCH_PAD": "#FDA4AF",
-    "ASCENT": "#7DD3FC",
-    "APOGEE": "#86EFAC",
-    "DESCENT": "#C4B5FD",
-    "PROBE_RELEASE": "#FDE68A",
-    "PAYLOAD_RELEASE": "#FDBA74",
-    "LANDED": "#CBD5E1",
+    "LAUNCH_PAD": "#FFB3C5",
+    "ASCENT": "#8BE6FF",
+    "APOGEE": "#9FFFC2",
+    "DESCENT": "#D8B4FE",
+    "PROBE_RELEASE": "#FFF1A6",
+    "PAYLOAD_RELEASE": "#FFC08A",
+    "LANDED": "#E2E8F0",
 }
-V1256_STAGE_ALPHA = 0.18
+V1256_STAGE_ALPHA = 0.13
 V1256_LINE_COLORS = {
-    "Altitude": "#126FA3",
+    "Altitude": "#66E8FF",
     "Velocity / Descent rate": "#1d4ed8",
     "Voltage": "#0072B2",
     "Current": "#7c3aed",
@@ -1258,8 +1259,8 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
     t_max = float(full_df["__REPLAY_TIME_S"].max())
     for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
         # Visible separation: each state band has a colored fill plus a brighter border.
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.12, min(float(alpha), 0.20)),
-                      line_width=2.1, line_color=border)
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)),
+                      line_width=1.7, line_color=border)
         fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
     # final boundary line
     rects_tmp = _v1256_stage_rects(full_df)
@@ -1268,7 +1269,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
     line_color = V1256_LINE_COLORS.get(graph_type, "#126FA3")
     fig.add_trace(go.Scatter(
         x=x, y=y, mode="lines", name=label,
-        line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
+        line=dict(color=line_color, width=3.4, shape="spline", smoothing=1.15),
         showlegend=False,
         fill="tozeroy" if graph_type == "Altitude" else None,
         fillcolor="rgba(0,119,167,.08)" if graph_type == "Altitude" else None,
@@ -1293,7 +1294,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
         height=500,
         margin=dict(l=62, r=24, t=44, b=48),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#0A1724",
+        plot_bgcolor="#071B2A",
         font=dict(color="#DDEBFF", size=12),
         showlegend=False,
         hovermode="x unified",
@@ -1346,8 +1347,8 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
     for x0, x1, state, color, border, alpha in stage_rects:
         # Keep state text out of the plot. Use border + boundary line for visibility.
         fig.add_vrect(
-            x0=x0, x1=x1, fillcolor=color, opacity=max(0.12, min(float(alpha), 0.20)),
-            line_width=2.1, line_color=border
+            x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)),
+            line_width=1.7, line_color=border
         )
         fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
     if stage_rects:
@@ -1359,7 +1360,7 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
         y=y_all,
         mode="lines",
         name=label,
-        line=dict(color=line_color, width=3, shape="spline", smoothing=0.75),
+        line=dict(color=line_color, width=3.4, shape="spline", smoothing=1.15),
         showlegend=False,
         fill="tozeroy" if graph_type == "Altitude" else None,
         fillcolor="rgba(0,119,167,.07)" if graph_type == "Altitude" else None,
@@ -1436,7 +1437,7 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
         height=600,
         margin=dict(l=66, r=28, t=36, b=105),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#0A1724",
+        plot_bgcolor="#071B2A",
         font=dict(color="#DDEBFF", size=12),
         showlegend=False,
         hovermode="x unified",
@@ -1543,9 +1544,10 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     graph_options = ["Altitude", "Velocity / Descent rate", "Voltage", "Temperature", "Pressure", "Current", "GPS altitude", "Motion magnitude", "GPS path"]
     speed_options = ["0.5x", "1x", "2x", "5x", "10x"]
     trail_options = ["Full trail", "Last 10 s", "Last 30 s", "Last 60 s"]
+    butter_options = ["iPhone Smooth", "Butter", "Ultra Butter", "Battery Saver"]
 
     st.markdown('<div class="cfds-wide-controls"><div class="cfds-wide-controls-title">Replay settings</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns([1.7, 1.35, 1.55, 1.55], gap="medium")
+    c1, c2, c3, c4, c5 = st.columns([1.45, 1.10, 1.20, 1.55, 1.25], gap="medium")
     with c1:
         graph_type = st.selectbox("Replay graph", graph_options, index=0, key="replay_graph_type_wide")
     with c2:
@@ -1561,13 +1563,23 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             key="replay_engine_mode_wide",
             help="Smooth mode uses Plotly animation controls inside the chart, not Streamlit button loops.",
         )
+    with c5:
+        butter_mode = st.selectbox(
+            "Animation feel",
+            butter_options,
+            index=1 if mobile_fast else 2,
+            key="replay_butter_mode_wide",
+            help="Butter modes increase interpolation frames and clamp frame timing for smoother browser animation.",
+        )
+    preset_frames = {"Battery Saver": 240, "iPhone Smooth": 420, "Butter": 720, "Ultra Butter": 1100}.get(butter_mode, max_points_default)
+    max_limit = 1400 if butter_mode == "Ultra Butter" else 1100
     max_points = st.slider(
-        "Smoothness / animation frames",
+        "Fine smoothness / frames",
         min_value=120,
-        max_value=900,
-        value=max_points_default,
+        max_value=max_limit,
+        value=min(max_limit, max(120, int(preset_frames))),
         step=20,
-        help="More frames = smoother but heavier on iPhone.",
+        help="More interpolated frames = smoother. If iPhone feels heavy, use iPhone Smooth or Battery Saver.",
         key="replay_max_points_wide",
     )
     st.markdown('<div class="cfds-mini-help cfds-wide-help">1x = real mission speed. 5x/10x are demo speeds. Use the Plotly modebar reset-axes button to reset view after zoom/pan.</div></div>', unsafe_allow_html=True)
@@ -1581,7 +1593,12 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     speed_value = 0.5 if speed == "0.5x" else float(str(speed).replace("x", ""))
     try:
         replay_span_s = float(replay_df["__REPLAY_TIME_S"].iloc[-1] - replay_df["__REPLAY_TIME_S"].iloc[0])
-        frame_duration = int(max(16, min(1400, (replay_span_s * 1000.0) / max(1, (len(replay_df) - 1) * speed_value))))
+        raw_frame_duration = (replay_span_s * 1000.0) / max(1, (len(replay_df) - 1) * speed_value)
+        # Smooth-like-butter tuning: avoid ultra-low durations that Safari/iPhone cannot render smoothly.
+        min_duration = 22 if butter_mode in ("Butter", "Ultra Butter") else 28
+        if butter_mode == "Battery Saver":
+            min_duration = 55
+        frame_duration = int(max(min_duration, min(1400, raw_frame_duration)))
     except Exception:
         frame_duration = 80
 
@@ -1595,7 +1612,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
           <div class="cfds-status-cell"><span>Frames</span><b>{len(replay_df)}</b></div>
           <div class="cfds-status-cell"><span>State</span><b><span class="cfds-state-pill">{state_preview}</span></b></div>
           <div class="cfds-status-cell"><span>Next event</span><b>{next_event}</b></div>
-          <div class="cfds-status-cell"><span>View control</span><b>Modebar reset axes</b></div>
+          <div class="cfds-status-cell"><span>Animation</span><b>{butter_mode}</b></div>
         </div>
         ''', unsafe_allow_html=True)
 
@@ -2429,6 +2446,52 @@ st.markdown(
         .cfds-event-strip-wide { grid-template-columns: 1fr 1fr !important; gap: .55rem !important; }
         .cfds-event-chip { min-height: 2.75rem !important; }
     }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# Replay color + butter smooth final override.
+st.markdown(
+    """
+    <style>
+    .cfds-state-pill {
+        background: rgba(14,43,69,.78) !important;
+        border: 1px solid rgba(56,213,255,.75) !important;
+        color: #EAFBFF !important;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.04) !important;
+    }
+    .cfds-wide-controls [data-testid="stSelectbox"] label,
+    .cfds-wide-controls [data-testid="stRadio"] label,
+    .cfds-wide-controls [data-testid="stSlider"] label {
+        color: #EAFBFF !important;
+        font-weight: 800 !important;
+    }
+    .cfds-wide-controls [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        background: #0E2B45 !important;
+        border: 1px solid rgba(56,213,255,.70) !important;
+        color: #EAFBFF !important;
+    }
+    .cfds-state-strip { margin-top: 1.55rem !important; }
+    .cfds-state-chip {
+        background: rgba(7,24,39,.90) !important;
+        color: #EAFBFF !important;
+        box-shadow: 0 0 0 1px rgba(255,255,255,.04), inset 0 0 16px rgba(56,213,255,.05) !important;
+    }
+    .cfds-state-dot { box-shadow: 0 0 10px currentColor !important; }
+    .stFileUploader [data-testid="stFileUploaderFile"] {
+        background: #0E2B45 !important;
+        border: 1px solid rgba(56,213,255,.65) !important;
+        color: #EAFBFF !important;
+    }
+    .stFileUploader [data-testid="stFileUploaderFileName"],
+    .stFileUploader [data-testid="stFileUploaderFileSize"] {
+        color: #EAFBFF !important;
+        opacity: 1 !important;
+        font-weight: 800 !important;
+    }
+    .stFileUploader button { color: #EAFBFF !important; }
     </style>
     """,
     unsafe_allow_html=True,
