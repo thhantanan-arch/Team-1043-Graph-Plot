@@ -2036,6 +2036,8 @@ def _inject_state_jump_buttons(fig, full_df, frame_duration_ms: int = 40):
         return fig
 
 def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
+    import numpy as np
+    import pandas as pd
     '''Wide V12.56 replay dashboard: graph first, controls above/below, no left rail.'''
     st.markdown('<a id="replay"></a><div class="cfds-replay-shell cfds-replay-wide-shell">', unsafe_allow_html=True)
 
@@ -2156,7 +2158,12 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     rail_dots = []
     rail_labels = []
     rail_start = 0.0
-    rail_end = float(replay_end) if np.isfinite(replay_end) else 1.0
+    try:
+        rail_end = float(replay_end)
+        if not np.isfinite(rail_end):
+            rail_end = 1.0
+    except Exception:
+        rail_end = 1.0
     try:
         _markers = _event_markers_for_replay(replay_df)[:6]
         if _markers:
