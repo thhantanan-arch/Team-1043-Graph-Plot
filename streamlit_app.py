@@ -2108,12 +2108,6 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             key="replay_butter_mode_wide",
             help="Butter modes increase interpolation frames and clamp frame timing for smoother browser animation.",
         )
-    # Mobile portrait: use manual scrub as the source of truth.
-    # Plotly browser animation cannot update Streamlit-side HTML rails/cards while playing.
-    # Manual scrub reruns Streamlit, so the rail marker and status cards move correctly.
-    if mobile_fast:
-        replay_engine = "Manual scrub fallback"
-
     preset_frames = {"Battery Saver": 240, "iPhone Smooth": 420, "Butter": 720, "Ultra Butter": 1100}.get(butter_mode, max_points_default)
     max_limit = 1400 if butter_mode == "Ultra Butter" else 1100
     max_points = st.slider(
@@ -2149,16 +2143,15 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     state_preview = _state_at_time_for_replay(replay_df, t_preview)
     next_event = _next_event_for_replay(replay_df, t_preview)
 
-    if not mobile_fast:
-        st.markdown(f'''
-            <div class="cfds-wide-status-strip">
-              <div class="cfds-status-cell"><span>Replay time</span><b>{t_preview:.1f} / {replay_end:.1f} s</b></div>
-              <div class="cfds-status-cell"><span>Frames</span><b>{len(replay_df)}</b></div>
-              <div class="cfds-status-cell"><span>State</span><b><span class="cfds-state-pill">{state_preview}</span></b></div>
-              <div class="cfds-status-cell"><span>Next event</span><b>{next_event}</b></div>
-              <div class="cfds-status-cell"><span>Animation</span><b>{butter_mode}</b></div>
-            </div>
-            ''', unsafe_allow_html=True)
+    st.markdown(f'''
+        <div class="cfds-wide-status-strip">
+          <div class="cfds-status-cell"><span>Replay time</span><b>{t_preview:.1f} / {replay_end:.1f} s</b></div>
+          <div class="cfds-status-cell"><span>Frames</span><b>{len(replay_df)}</b></div>
+          <div class="cfds-status-cell"><span>State</span><b><span class="cfds-state-pill">{state_preview}</span></b></div>
+          <div class="cfds-status-cell"><span>Next event</span><b>{next_event}</b></div>
+          <div class="cfds-status-cell"><span>Animation</span><b>{butter_mode}</b></div>
+        </div>
+        ''', unsafe_allow_html=True)
 
     # Filled replay action deck: this replaces the old empty title bar above the graph.
     event_buttons = []
@@ -2195,8 +2188,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         alt_text = f"{alt_now:.1f} m" if alt_now is not None and np.isfinite(alt_now) else "—"
     except Exception:
         alt_text = "—"
-    if not mobile_fast:
-        st.markdown(f'''
+    st.markdown(f'''
         <div class="cfds-replay-action-deck cfds-action-deck-pair">
           <div class="cfds-replay-action-main">
             <div class="cfds-replay-action-left">
@@ -2292,16 +2284,13 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             fig.update_layout(
                 updatemenus=[],
                 sliders=[],
-                height=470,
-                autosize=True,
-                margin=dict(l=54, r=8, t=6, b=58),
-                xaxis=dict(automargin=True, title_standoff=6, tickfont=dict(size=9), title_font=dict(size=10), domain=[0.0, 1.0]),
-                yaxis=dict(automargin=True, title_standoff=6, tickfont=dict(size=9), title_font=dict(size=10), domain=[0.0, 1.0]),
+                height=560,
+                margin=dict(l=58, r=10, t=10, b=74),
+                xaxis=dict(automargin=True, title_standoff=8, tickfont=dict(size=9), title_font=dict(size=10)),
+                yaxis=dict(automargin=True, title_standoff=7, tickfont=dict(size=9), title_font=dict(size=10)),
                 legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0, font=dict(size=9)),
                 modebar=dict(bgcolor="rgba(7,24,39,0.85)", color="#EAFBFF", activecolor="#38D5FF"),
             )
-            replay_config["displayModeBar"] = False
-            replay_config["staticPlot"] = False
             replay_config["modeBarButtonsToRemove"] = [
                 "lasso2d", "select2d", "toImage", "zoomIn2d", "zoomOut2d",
                 "autoScale2d", "toggleSpikelines", "hoverCompareCartesian",
@@ -2364,35 +2353,6 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         sub = sub[sub["__REPLAY_TIME_S"] >= t_now - seconds]
     t_now = float(replay_df["__REPLAY_TIME_S"].iloc[frame_idx])
     st.markdown(f'<div class="cfds-mini-help">Replay time: <b>{t_now:.1f} s</b> / {replay_end:.1f} s • Frame {frame_idx+1}/{total_frames}</div>', unsafe_allow_html=True)
-    if mobile_fast:
-        live_state = _state_at_time_for_replay(replay_df, t_now)
-        live_next = _next_event_for_replay(replay_df, t_now)
-        try:
-            live_alt_col = _find_first_col(replay_df, ["ALTITUDE", "ALTITUDE_M", "altitude", "Altitude"])
-            live_alt = float(pd.to_numeric(replay_df[live_alt_col], errors="coerce").interpolate().iloc[frame_idx]) if live_alt_col else None
-            live_alt_text = f"{live_alt:.1f} m" if live_alt is not None and np.isfinite(live_alt) else "—"
-        except Exception:
-            live_alt_text = "—"
-        live_rail_pct = max(0.0, min(100.0, ((float(t_now) - rail_start) / max(1e-9, rail_end - rail_start)) * 100.0))
-        st.markdown(f'''
-        <div class="cfds-mobile-replay-strip">
-          <div class="cfds-mobile-replay-top">
-            <b>{graph_type.upper()}</b>
-            <span>{live_state}</span>
-            <em>{live_next}</em>
-          </div>
-          <div class="cfds-replay-skip-row">{''.join(event_buttons)}</div>
-          <div class="cfds-mission-rail cfds-mobile-rail">
-            <div class="cfds-rail-head"><span>MISSION RAIL</span><b>{t_now:.1f}s / {rail_end:.1f}s</b></div>
-            <div class="cfds-rail-track">
-              <span class="cfds-rail-fill" style="width:{live_rail_pct:.2f}%"></span>
-              {''.join(rail_dots)}
-              <span class="cfds-rail-now" style="left:{live_rail_pct:.2f}%"></span>
-            </div>
-          </div>
-          <div class="cfds-mini-help">Current: <b>{live_state}</b> • altitude {live_alt_text} • rail follows the slider frame.</div>
-        </div>
-        ''', unsafe_allow_html=True)
 
     if graph_type == "GPS map path":
         import pandas as pd
@@ -2415,7 +2375,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             fig = _make_gps_xy_animation_fig(gps_df, replay_df, frame_duration_ms=0)
             if fig is not None:
                 fig.update_layout(updatemenus=[], sliders=[])
-                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
             else:
                 chart_slot.info("GPS XY path needs more valid points.")
     elif graph_type == "GPS XYZ path":
@@ -2425,7 +2385,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         else:
             fig = _make_gps_xyz_fig(gps_df)
             if fig is not None:
-                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True})
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True})
             else:
                 chart_slot.info("GPS XYZ path needs more valid points.")
     elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Angular velocity XYZ", "Tilt XYZ"):
@@ -2436,7 +2396,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             fig = _make_v1256_multitrace_animation_fig(plot_df, label, replay_df, graph_type, frame_duration_ms=0)
             if fig is not None:
                 fig.update_layout(updatemenus=[], sliders=[], height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
-                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
             else:
                 chart_slot.info("No numeric data available yet for this replay frame.")
     else:
@@ -2449,14 +2409,8 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 chart_slot.info("No numeric data available yet for this replay frame.")
             else:
                 fig = _make_v1256_replay_fig(plot_df, label, replay_df, graph_type, t_now)
-                fig.update_layout(
-                    height=430 if mobile_fast else 680,
-                    margin=dict(l=54, r=8, t=16, b=56) if mobile_fast else dict(l=62, r=24, t=34, b=74),
-                    dragmode="pan",
-                    xaxis=dict(automargin=True, domain=[0.0, 1.0]),
-                    yaxis=dict(automargin=True, domain=[0.0, 1.0]),
-                )
-                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                fig.update_layout(height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
+                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
     st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
     chips = []
     for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
@@ -2524,272 +2478,6 @@ def render_family_selector(preset_name: str) -> list[str]:
 
 
 
-
-
-
-
-# --- Launch Live Graph Dashboard -----------------------------------------------------
-def _cfds_live_graph_css_once() -> None:
-    st.markdown("""
-    <style>
-    .cfds-live-panel {
-        border: 1px solid rgba(56,213,255,.30);
-        border-radius: 18px;
-        background: linear-gradient(180deg, rgba(7,24,39,.96), rgba(5,18,31,.96));
-        padding: 1rem;
-        margin: .8rem 0 1rem 0;
-    }
-    .cfds-live-title {
-        color:#38D5FF;
-        font-weight:900;
-        letter-spacing:.14em;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        margin-bottom:.25rem;
-    }
-    .cfds-live-sub { color:#BFD7EA; font-size:.86rem; margin-bottom:.75rem; }
-    .cfds-live-kpis {
-        display:grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap:.55rem;
-        margin:.55rem 0 .75rem 0;
-    }
-    .cfds-live-kpi {
-        background:#071827;
-        border:1px solid rgba(56,213,255,.24);
-        border-radius:13px;
-        padding:.66rem .72rem;
-        min-height:62px;
-    }
-    .cfds-live-kpi span {
-        display:block;
-        color:#9DB7C9;
-        font-size:.60rem;
-        font-weight:900;
-        letter-spacing:.10em;
-    }
-    .cfds-live-kpi b {
-        display:block;
-        color:#EAFBFF;
-        font-size:.88rem;
-        margin-top:.2rem;
-        word-break:break-word;
-    }
-    .cfds-live-note {
-        border-left:3px solid #38D5FF;
-        background:rgba(14,43,69,.55);
-        padding:.65rem .8rem;
-        color:#EAFBFF;
-        border-radius:10px;
-        margin:.55rem 0;
-        font-size:.84rem;
-    }
-    @media (max-width: 760px) {
-        .cfds-live-panel { padding:.72rem; border-radius:14px; }
-        .cfds-live-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap:.42rem; }
-        .cfds-live-kpi { min-height:54px; padding:.55rem .6rem; }
-        .cfds-live-kpi b { font-size:.82rem; }
-        .cfds-live-sub { font-size:.76rem; }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-
-def _cfds_live_find_col(df, aliases: list[str]) -> str | None:
-    return _cfds_find_col(df, aliases) if "_cfds_find_col" in globals() else None
-
-
-def _cfds_live_time_col(df):
-    return _cfds_find_col(df, ["__REPLAY_TIME_S", "MISSION_TIME", "TIME", "UTC_TIME", "PACKET_COUNT"])
-
-
-def _cfds_live_build_frame_df(df, frame: int, trail_points: int | None):
-    if df is None or df.empty:
-        return df
-    frame = max(0, min(int(frame), len(df) - 1))
-    if trail_points is None:
-        return df.iloc[:frame + 1].copy()
-    start = max(0, frame - int(trail_points) + 1)
-    return df.iloc[start:frame + 1].copy()
-
-
-def _cfds_live_kpi_html(kpis: list[tuple[str, str]]) -> str:
-    return '<div class="cfds-live-kpis">' + ''.join(
-        f'<div class="cfds-live-kpi"><span>{k}</span><b>{v}</b></div>' for k, v in kpis
-    ) + '</div>'
-
-
-def _cfds_make_live_field_fig(df, frame_df, fields: list[tuple[str, str]], title: str, mobile_fast: bool):
-    import plotly.graph_objects as go
-    import pandas as pd
-    time_col = _cfds_live_time_col(df)
-    if not time_col or time_col not in frame_df.columns:
-        x = list(range(len(frame_df)))
-        x_title = "Sample"
-    else:
-        x = pd.to_numeric(frame_df[time_col], errors="coerce")
-        x_title = "Mission time (s)"
-
-    fig = go.Figure()
-    colors = ["#38D5FF", "#FF4D6D", "#22C55E", "#F59E0B", "#A855F7"]
-    for idx, (label, col) in enumerate(fields):
-        if col and col in frame_df.columns:
-            y = pd.to_numeric(frame_df[col], errors="coerce")
-            fig.add_trace(go.Scatter(
-                x=x, y=y, mode="lines",
-                name=label,
-                line=dict(color=colors[idx % len(colors)], width=2.5, shape="spline", smoothing=1.05),
-            ))
-
-    fig.update_layout(
-        title=None,
-        height=390 if mobile_fast else 520,
-        margin=dict(l=54, r=10, t=18, b=54) if mobile_fast else dict(l=66, r=24, t=34, b=74),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#071B2A",
-        font=dict(color="#DDEBFF", size=11 if mobile_fast else 12),
-        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0, font=dict(size=9 if mobile_fast else 11)),
-        xaxis=dict(title=x_title, gridcolor="rgba(203,213,225,.14)", zeroline=False, automargin=True),
-        yaxis=dict(title=title, gridcolor="rgba(203,213,225,.14)", zeroline=False, automargin=True),
-        hovermode="x unified",
-    )
-    return fig
-
-
-def _cfds_derive_lost_packets(df, packet_col: str | None, frame: int) -> str:
-    if not packet_col or packet_col not in df.columns:
-        return "—"
-    import pandas as pd
-    s = pd.to_numeric(df[packet_col].iloc[:frame+1], errors="coerce").dropna()
-    if len(s) < 2:
-        return "0"
-    diffs = s.diff().dropna()
-    lost = int((diffs[diffs > 1] - 1).sum()) if not diffs.empty else 0
-    return str(max(0, lost))
-
-
-
-
-def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) -> None:
-    """Launch-day live graph style dashboard.
-    This is replay-live from the normalized CSV unless a real live source is connected later.
-    It exists to support Launch scoresheet evidence: live display fields, five plots, one-screen dashboard, packet monitoring.
-    """
-    import pandas as pd
-    _cfds_live_graph_css_once()
-    df = _cfds_read_payload_df(payload)
-    st.markdown(
-        '<div class="cfds-live-panel">'
-        '<div class="cfds-live-title">LAUNCH LIVE GRAPH DASHBOARD</div>'
-        '<div class="cfds-live-sub">Scoresheet-facing live/replay dashboard: mission time, temperature, GPS, packet count, lost packet count, FSW state, and 5 plotted fields.</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    if df.empty:
-        st.warning("No normalized CSV available. Generate graphs first, then Live Graph Dashboard can replay the log like a launch-day display.")
-        return
-
-    time_col = _cfds_find_col(df, ["__REPLAY_TIME_S", "MISSION_TIME", "TIME", "UTC_TIME", "PACKET_COUNT"])
-    alt_col = _cfds_find_col(df, ["ALTITUDE", "ALTITUDE_M", "PRESSURE_ALTITUDE", "Altitude"])
-    temp_col = _cfds_find_col(df, ["TEMPERATURE", "TEMP", "TEMP_C", "MS8607_TEMPERATURE"])
-    voltage_col = _cfds_find_col(df, ["VOLTAGE", "BATTERY_VOLTAGE", "VBATT", "BUS_VOLTAGE"])
-    current_col = _cfds_find_col(df, ["CURRENT", "CURRENT_A", "BATTERY_CURRENT"])
-    pressure_col = _cfds_find_col(df, ["PRESSURE", "PRESSURE_PA", "PRESSURE_MBAR"])
-    state_col = _cfds_find_col(df, ["STATE", "FSW_STATE", "FLIGHT_STATE"])
-    packet_col = _cfds_find_col(df, ["PACKET_COUNT", "RX_PACKET_COUNT", "PACKET"])
-    lost_col = _cfds_find_col(df, ["LOST_PACKET_COUNT", "LOST_PACKETS", "PACKET_LOSS"])
-    lat_col = _cfds_find_col(df, ["LATITUDE", "GPS_LAT", "LAT"])
-    lon_col = _cfds_find_col(df, ["LONGITUDE", "GPS_LON", "LON"])
-    gps_alt_col = _cfds_find_col(df, ["GPS_ALTITUDE", "GPS_ALT", "GNSS_ALTITUDE"])
-
-    default_frame = min(len(df) - 1, max(0, len(df)//4))
-
-    # Streamlit rule: do not assign to a widget's session_state key after the widget is instantiated.
-    # Reset/End buttons write to a separate pending key, then the value is applied before st.slider() renders.
-    if "cfds_live_frame_pending" in st.session_state:
-        st.session_state["cfds_live_frame"] = int(max(0, min(st.session_state.pop("cfds_live_frame_pending"), len(df) - 1)))
-
-    frame = st.slider(
-        "Live replay frame",
-        min_value=0,
-        max_value=len(df) - 1,
-        value=int(st.session_state.get("cfds_live_frame", default_frame)),
-        step=1,
-        key="cfds_live_frame",
-        help="Replay-live from uploaded log. True launch live requires a radio/serial/websocket source.",
-    )
-    c1, c2, c3 = st.columns(3)
-    if c1.button("↺ Reset live frame", use_container_width=True, key="cfds_live_reset"):
-        st.session_state["cfds_live_frame_pending"] = 0
-        st.rerun()
-    if c2.button("⏭ End", use_container_width=True, key="cfds_live_end"):
-        st.session_state["cfds_live_frame_pending"] = len(df) - 1
-        st.rerun()
-    trail_choice = c3.selectbox("Trail", ["Full trail", "Last 30 rows", "Last 100 rows"], index=0, key="cfds_live_trail")
-    trail_points = None if trail_choice == "Full trail" else (30 if "30" in trail_choice else 100)
-
-    row = df.iloc[frame]
-    def val(col, suffix=""):
-        if col and col in df.columns:
-            v = row.get(col)
-            try:
-                if pd.notna(v) and isinstance(v, (int, float)):
-                    return f"{float(v):.2f}{suffix}"
-            except Exception:
-                pass
-            return str(v) + suffix if pd.notna(v) else "—"
-        return "—"
-
-    mission_time = val(time_col, " s") if time_col else str(frame)
-    gps_text = f"{val(lat_col)}, {val(lon_col)}" if lat_col and lon_col else "—"
-    lost_text = val(lost_col) if lost_col else _cfds_derive_lost_packets(df, packet_col, frame)
-    state_text = val(state_col) if state_col else "—"
-    kpis = [
-        ("MISSION TIME", mission_time),
-        ("TEMP", val(temp_col, " °C")),
-        ("GPS", gps_text),
-        ("PACKET", val(packet_col)),
-        ("LOST", lost_text),
-        ("FSW STATE", state_text),
-    ]
-    st.markdown(_cfds_live_kpi_html(kpis), unsafe_allow_html=True)
-
-    frame_df = _cfds_live_build_frame_df(df, frame, trail_points)
-    plot_groups = [
-        ("Altitude", [("Altitude", alt_col), ("GPS altitude", gps_alt_col)]),
-        ("Power", [("Voltage", voltage_col), ("Current", current_col)]),
-        ("Environment", [("Temperature", temp_col), ("Pressure", pressure_col)]),
-    ]
-    available_plot_fields = sum(1 for _label, col in [
-        ("Altitude", alt_col), ("Temperature", temp_col), ("Voltage", voltage_col),
-        ("GPS latitude", lat_col), ("GPS longitude", lon_col), ("State", state_col),
-        ("Pressure", pressure_col), ("Current", current_col)
-    ] if col)
-
-    st.markdown(
-        f'<div class="cfds-live-note">Live score readiness: {available_plot_fields}/5 plotted/displayable fields detected. '
-        'This dashboard proves replay/live display format; true RF live demo still needs launch-day source evidence.</div>',
-        unsafe_allow_html=True,
-    )
-
-    # Original live graph format restored: Altitude / Power / Environment tabs.
-    # Only the Live Graph was removed.
-    tabs = st.tabs(["Altitude", "Power", "Environment"])
-    for tab, (title, fields) in zip(tabs, plot_groups):
-        with tab:
-            active_fields = [(label, col) for label, col in fields if col]
-            if not active_fields:
-                st.info(f"No usable columns found for {title}.")
-            else:
-                fig = _cfds_make_live_field_fig(df, frame_df, active_fields, title, mobile_fast)
-                st.plotly_chart(
-                    fig,
-                    width="stretch",
-                    theme=None,
-                    config={"displaylogo": False, "responsive": True, "displayModeBar": not mobile_fast},
-                    key=f"cfds_live_{title.lower()}",
-                )
-
-
 # --- Score Evidence / Rubric Checker -------------------------------------------------
 def _cfds_evidence_css_once() -> None:
     st.markdown("""
@@ -2834,25 +2522,6 @@ def _cfds_evidence_css_once() -> None:
         font-size:1.16rem;
         margin-top:.16rem;
     }
-
-    .cfds-status-legend {
-        display:flex;
-        flex-wrap:wrap;
-        gap:.45rem;
-        margin:.55rem 0 .75rem 0;
-    }
-    .cfds-status-legend span {
-        border-radius:999px;
-        padding:.34rem .62rem;
-        font-size:.72rem;
-        font-weight:900;
-        border:1px solid rgba(255,255,255,.12);
-    }
-    .cfds-status-legend .have { background:#063B2A; color:#8EF8B8; border-color:#22C55E; }
-    .cfds-status-legend .check { background:#3A2A06; color:#FFE08A; border-color:#F59E0B; }
-    .cfds-status-legend .missing { background:#3B0D14; color:#FF9AAE; border-color:#EF4444; }
-    .cfds-status-legend .manual { background:#20133A; color:#D8B4FE; border-color:#A855F7; }
-
     .cfds-evidence-note {
         border-left:3px solid #38D5FF;
         background:rgba(14,43,69,.55);
@@ -3132,7 +2801,6 @@ def _cfds_summary_counts(rows: list[dict]) -> dict:
     return out
 
 
-
 def _cfds_status_theme(status: str) -> tuple[str, str, str]:
     s = str(status)
     if "HAVE" in s:
@@ -3146,28 +2814,21 @@ def _cfds_status_theme(status: str) -> tuple[str, str, str]:
     return "#071827", "#EAFBFF", "#1E526C"
 
 
-def _cfds_status_css(status: str) -> str:
-    bg, fg, bd = _cfds_status_theme(status)
-    return f"background-color:{bg}; color:{fg}; font-weight:800; border-left:4px solid {bd};"
+def _cfds_html_escape(value) -> str:
+    import html
+    return html.escape("" if value is None else str(value))
 
 
 def _cfds_render_status_legend() -> None:
-    st.markdown(
-        '''
+    legend_html = """
         <div class="cfds-status-legend">
           <span class="have">✅ HAVE</span>
           <span class="check">⚠️ CHECK / PARTIAL</span>
           <span class="missing">❌ MISSING</span>
           <span class="manual">📝 MANUAL</span>
         </div>
-        ''',
-        unsafe_allow_html=True,
-    )
-
-
-def _cfds_html_escape(value) -> str:
-    import html
-    return html.escape("" if value is None else str(value))
+    """
+    st.markdown(legend_html, unsafe_allow_html=True)
 
 
 def _cfds_render_evidence_table(rows: list[dict], key: str) -> None:
@@ -3193,17 +2854,17 @@ def _cfds_render_evidence_table(rows: list[dict], key: str) -> None:
                 cells.append(f'<td style="background:linear-gradient(90deg,{bg},#071827 72%);color:{fg};">{val}</td>')
         html_rows.append("<tr>" + "".join(cells) + "</tr>")
 
-    st.markdown(
-        f'''
+    header_html = ''.join(f'<th>{_cfds_html_escape(h)}</th>' for h in headers)
+    body_html = ''.join(html_rows)
+    table_html = f"""
         <div class="cfds-table-wrap" id="{_cfds_html_escape(key)}">
           <table class="cfds-evidence-table">
-            <thead><tr>{''.join(f'<th>{h}</th>' for h in headers)}</tr></thead>
-            <tbody>{''.join(html_rows)}</tbody>
+            <thead><tr>{header_html}</tr></thead>
+            <tbody>{body_html}</tbody>
           </table>
         </div>
-        ''',
-        unsafe_allow_html=True,
-    )
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 def render_score_evidence_checker(payload: dict, mobile_fast: bool = True) -> None:
@@ -3213,7 +2874,7 @@ def render_score_evidence_checker(payload: dict, mobile_fast: bool = True) -> No
     _cfds_evidence_css_once()
     df = _cfds_read_payload_df(payload)
     st.markdown(
-        '<a id="score"></a><div class="cfds-evidence-panel">'
+        '<div class="cfds-evidence-panel">'
         '<div class="cfds-evidence-title">SCORE EVIDENCE / RUBRIC CHECKER</div>'
         '<div class="cfds-evidence-sub">Mapped to the 2026 Launch and PFR scoring sections: HAVE / CHECK / MISSING / MANUAL evidence.</div>'
         '</div>',
@@ -3371,7 +3032,6 @@ st.markdown(
         <a href="#generate">Generate</a>
         <a href="#preview">Preview</a>
         <a href="#replay">Replay</a>
-        <a href="#score">Score</a>
         <a href="#export">Export</a>
       </div>
     </div>
@@ -3425,31 +3085,16 @@ st.markdown(
 )
 
 
-# Mascot card: Elfaria Albis Serfort.
-# Visible compact lore panel. The mascot image file must be in repo root as elfaria_mascot.png.
+# Mascot card: Elfaria Albis Serfort. Keep small so it does not create empty layout gaps.
 _mascot_path = Path(__file__).with_name("elfaria_mascot.png")
 if _mascot_path.exists():
-    st.markdown('<div class="cfds-section-banner">DAEDALUS ASSISTANT</div>', unsafe_allow_html=True)
-    m1, m2 = st.columns([0.20, 0.80], gap="small")
-    with m1:
-        st.image(str(_mascot_path), width=138)
-    with m2:
-        st.markdown("""
-        <div class="cfds-mascot-lore">
-          <div class="cfds-mascot-name">Elfaria Albis Serfort</div>
-          <div class="cfds-mascot-role">CFDS assistant mascot • created by <b>Rimuya</b></div>
-          <div class="cfds-mascot-story">
-            Elfaria was chosen as the Daedalus CFDS guide to make flight-log checking feel less empty and more mission-focused.
-            Her role is to sit beside the graph engine, remind the team about evidence quality, and keep the Launch/PFR workflow clear.
-          </div>
-          <div class="cfds-mascot-tags">
-            <span>Graph helper</span><span>Rubric checker</span><span>Mission companion</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.caption("Keep `elfaria_mascot.png` in the same folder as `streamlit_app.py`.")
-else:
-    st.warning("Mascot image missing: upload `elfaria_mascot.png` to the repo root beside `streamlit_app.py`.")
+    with st.expander("CFDS Mascot", expanded=False):
+        c_m1, c_m2 = st.columns([1, 3])
+        with c_m1:
+            st.image(str(_mascot_path), use_container_width=True)
+        with c_m2:
+            st.markdown("**Elfaria Albis Serfort** — Daedalus CFDS assistant mascot.")
+            st.caption("Used only as a lightweight app identity panel so it does not slow down graph replay.")
 
 # Mission input and generation command use real Streamlit layout, not open HTML wrappers.
 # Open raw <div> wrappers around widgets caused empty dark boxes and inconsistent white file chips.
@@ -3530,7 +3175,6 @@ if start:
 if st.session_state.get("cfds_last_export") is not None:
     show_previews_from_payload(st.session_state["cfds_last_export"], max_preview, show_full_png, show_all_folders)
     render_flight_replay(st.session_state["cfds_last_export"], mobile_fast=mobile_fast)
-    render_launch_live_graph_dashboard(st.session_state["cfds_last_export"], mobile_fast=mobile_fast)
     render_score_evidence_checker(st.session_state["cfds_last_export"], mobile_fast=mobile_fast)
     show_export_center(st.session_state["cfds_last_export"])
 
@@ -3619,120 +3263,7 @@ st.markdown(
     }
 
 
-    /* Mascot card visibility */
-    .cfds-section-banner + div [data-testid="stImage"] img {
-        border-radius: 16px !important;
-        border: 1px solid rgba(56,213,255,.35) !important;
-        background: rgba(7,24,39,.75) !important;
-        padding: 4px !important;
-    }
-
-
-    /* Dark-blue interaction/flicker system
-       Keep every temporary focus/pulse/loading visual in the CFDS dark-blue palette.
-       Avoid white/red flashes except semantic error cards from Streamlit itself. */
-    :root {
-        --cfds-flash-bg: #071827;
-        --cfds-flash-bg-2: #0A2A43;
-        --cfds-flash-border: #1E526C;
-        --cfds-flash-cyan: #38D5FF;
-        --cfds-focus-ring: rgba(56, 213, 255, .42);
-    }
-
-    @keyframes cfds-dark-blue-pulse {
-        0%   { box-shadow: 0 0 0 0 rgba(56,213,255,.18); border-color:#1E526C; background-color:#071827; }
-        50%  { box-shadow: 0 0 0 4px rgba(56,213,255,.10); border-color:#38D5FF; background-color:#0A2A43; }
-        100% { box-shadow: 0 0 0 0 rgba(56,213,255,.18); border-color:#1E526C; background-color:#071827; }
-    }
-
-    /* Streamlit widgets: focus/active should not become white/red. */
-    .stButton > button:focus,
-    .stButton > button:focus-visible,
-    .stDownloadButton > button:focus,
-    .stDownloadButton > button:focus-visible,
-    div[data-baseweb="select"] *:focus,
-    div[data-baseweb="input"] input:focus,
-    textarea:focus,
-    input:focus {
-        outline: 2px solid var(--cfds-focus-ring) !important;
-        outline-offset: 2px !important;
-        box-shadow: 0 0 0 2px rgba(56,213,255,.16) !important;
-        border-color: var(--cfds-flash-cyan) !important;
-        background-color: var(--cfds-flash-bg) !important;
-    }
-
-    /* File uploader / selected file chip / upload drop zone */
-    [data-testid="stFileUploader"] section,
-    [data-testid="stFileUploader"] div,
-    .cfds-uploaded-chip {
-        transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
-    }
-
-    [data-testid="stFileUploader"] section:focus-within,
-    [data-testid="stFileUploader"] section:hover,
-    .cfds-uploaded-chip:hover {
-        border-color: var(--cfds-flash-cyan) !important;
-        background-color: var(--cfds-flash-bg-2) !important;
-        box-shadow: 0 0 0 2px rgba(56,213,255,.12) inset !important;
-    }
-
-    /* Progress / status / temporary info surfaces */
-    [data-testid="stStatusWidget"],
-    [data-testid="stSpinner"],
-    [data-testid="stProgress"] {
-        color: #EAFBFF !important;
-    }
-
-    [data-testid="stProgress"] > div > div > div > div {
-        background: linear-gradient(90deg, #0A2A43, #38D5FF) !important;
-    }
-
-    /* CFDS cards/chips can pulse, but only in dark blue. */
-    .cfds-state-pill,
-    .cfds-play-chip:active,
-    .cfds-skip-chip:active,
-    .cfds-live-card:focus-within,
-    .cfds-evidence-kpi:focus-within,
-    .cfds-mobile-replay-strip:focus-within {
-        animation: cfds-dark-blue-pulse 1.2s ease-in-out 1;
-    }
-
-    /* Make Streamlit warning/info backgrounds less visually harsh inside dark theme. */
-    div[data-testid="stAlert"] {
-        border-radius: 14px !important;
-        border-color: rgba(56,213,255,.22) !important;
-    }
-
-    /* Accessibility: if the device asks for reduced motion, disable pulse entirely. */
-    @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after {
-            animation-duration: .001ms !important;
-            animation-iteration-count: 1 !important;
-            transition-duration: .001ms !important;
-            scroll-behavior: auto !important;
-        }
-    }
-
-
-    /* Final dark-blue transient override: hover/focus/active/loading must not white-flash. */
-    .stButton > button:hover,
-    .stDownloadButton > button:hover,
-    .stButton > button:active,
-    .stDownloadButton > button:active {
-        background: #0A2A43 !important;
-        border-color: #38D5FF !important;
-        color: #EAFBFF !important;
-        box-shadow: 0 0 0 2px rgba(56,213,255,.14) inset !important;
-    }
-    [data-testid="stBaseButton-primary"]:hover,
-    [data-testid="stBaseButton-secondary"]:hover {
-        background: #0A2A43 !important;
-        border-color: #38D5FF !important;
-        color: #EAFBFF !important;
-    }
-
-
-    /* No white boxes: checkbox, rubric table header, fallback dataframe */
+    /* Score sheet evidence table: dark custom table, no white Streamlit dataframe header */
     .cfds-table-wrap {
         width: 100%;
         overflow-x: auto;
@@ -3768,23 +3299,36 @@ st.markdown(
         vertical-align: top;
         line-height: 1.28;
     }
-    table.cfds-evidence-table tbody tr:hover td {
-        filter: brightness(1.18);
-    }
+    table.cfds-evidence-table tbody tr:hover td { filter: brightness(1.18); }
     table.cfds-evidence-table .cfds-status-cell {
         white-space: nowrap;
         font-weight: 900;
         letter-spacing: .02em;
     }
+    .cfds-status-legend {
+        display:flex;
+        flex-wrap:wrap;
+        gap:.45rem;
+        margin:.55rem 0 .75rem 0;
+    }
+    .cfds-status-legend span {
+        border-radius:999px;
+        padding:.34rem .62rem;
+        font-size:.72rem;
+        font-weight:900;
+        border:1px solid rgba(255,255,255,.12);
+    }
+    .cfds-status-legend .have { background:#063B2A; color:#8EF8B8; border-color:#22C55E; }
+    .cfds-status-legend .check { background:#3A2A06; color:#FFE08A; border-color:#F59E0B; }
+    .cfds-status-legend .missing { background:#3B0D14; color:#FF9AAE; border-color:#EF4444; }
+    .cfds-status-legend .manual { background:#20133A; color:#D8B4FE; border-color:#A855F7; }
 
-    /* Streamlit checkbox white-square override */
+    /* Score sheet checkboxes / fallback table darkening */
     div[data-testid="stCheckbox"] label,
     div[data-testid="stCheckbox"] label span,
     div[data-testid="stCheckbox"] div,
     label[data-baseweb="checkbox"],
-    label[data-baseweb="checkbox"] span {
-        color: #EAFBFF !important;
-    }
+    label[data-baseweb="checkbox"] span { color: #EAFBFF !important; }
     div[data-testid="stCheckbox"] [data-baseweb="checkbox"] > div,
     label[data-baseweb="checkbox"] > div,
     label[data-baseweb="checkbox"] span:first-child,
@@ -3798,17 +3342,6 @@ st.markdown(
         color: #38D5FF !important;
         fill: #38D5FF !important;
         stroke: #38D5FF !important;
-    }
-    div[data-testid="stCheckbox"]:hover span:first-child,
-    label[data-baseweb="checkbox"]:hover span:first-child {
-        background-color: #0A2A43 !important;
-        border-color: #38D5FF !important;
-    }
-
-    div[data-testid="stDataFrame"] * { color-scheme: dark !important; }
-    div[data-testid="stDataFrame"] [role="columnheader"] {
-        background: #0A2A43 !important;
-        color: #EAFBFF !important;
     }
 
     /* Selectbox / dropdown text */
