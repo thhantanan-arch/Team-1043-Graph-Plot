@@ -2144,7 +2144,12 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     except Exception:
         frame_duration = 80
 
-    t_preview = float(replay_df["__REPLAY_TIME_S"].iloc[min(max(0, len(replay_df)//4), len(replay_df)-1)])
+    # Deck/rail preview must follow the manual replay frame on rerun.
+    # The slider itself renders later, so we read the previous frame from replay_frame_wide here.
+    # Streamlit reruns top-to-bottom after widget changes, and widget values are kept in Session State.
+    preview_frame_idx = int(st.session_state.get("replay_frame_wide", min(max(0, len(replay_df)//4), len(replay_df)-1)))
+    preview_frame_idx = min(max(0, preview_frame_idx), len(replay_df)-1)
+    t_preview = float(replay_df["__REPLAY_TIME_S"].iloc[preview_frame_idx])
     state_preview = _state_at_time_for_replay(replay_df, t_preview)
     next_event = _next_event_for_replay(replay_df, t_preview)
 
@@ -2189,7 +2194,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
     right_next = next_event
     try:
         alt_col = _find_first_col(replay_df, ["ALTITUDE", "ALTITUDE_M", "altitude", "Altitude"])
-        alt_now = float(pd.to_numeric(replay_df[alt_col], errors="coerce").interpolate().iloc[min(max(0, len(replay_df)//4), len(replay_df)-1)]) if alt_col else None
+        alt_now = float(pd.to_numeric(replay_df[alt_col], errors="coerce").interpolate().iloc[preview_frame_idx]) if alt_col else None
         alt_text = f"{alt_now:.1f} m" if alt_now is not None and np.isfinite(alt_now) else "—"
     except Exception:
         alt_text = "—"
@@ -2197,8 +2202,8 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         <div class="cfds-replay-action-deck cfds-action-deck-pair">
           <div class="cfds-replay-action-main">
             <div class="cfds-replay-action-left">
-              <div class="cfds-action-title">{graph_type.upper()}</div>
-              <div class="cfds-action-sub">browser replay controls • state jump markers • reset view in Plotly modebar</div>
+              <div class="cfds-action-title">REPLAY CONTROL</div>
+              <div class="cfds-action-sub">Graph: <b>{graph_type}</b> • state jump markers • reset view in Plotly modebar</div>
             </div>
             <div class="cfds-replay-action-buttons">
               <span class="cfds-play-chip">▶ Play</span>
@@ -2222,6 +2227,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
               <span>WINDOW STATUS</span>
               <b>{butter_mode}</b>
               <em>{len(replay_df)} frames • {frame_duration} ms</em>
+            </div>
+            <div class="cfds-live-card cfds-live-card-blue">
+              <span>RAIL SYNC</span>
+              <b>Frame locked</b>
+              <em>rail follows replay slider on rerun</em>
             </div>
           </div>
           <div class="cfds-mission-rail">
@@ -4642,6 +4652,73 @@ st.markdown("""
         pointer-events: none !important;
     }
     .cfds-live-card-green { display: none !important; }
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
+
+/* CFDS bug/error surfaces: avoid white boxes during exceptions or warning states */
+div[data-testid="stException"],
+div[data-testid="stAlert"],
+div[data-testid="stNotification"],
+div[data-testid="stCodeBlock"],
+div[data-testid="stMarkdownContainer"] pre,
+div[data-testid="stMarkdownContainer"] code {
+    background: #071827 !important;
+    color: #EAFBFF !important;
+    border-color: rgba(124,58,237,.38) !important;
+}
+div[data-testid="stException"] *,
+div[data-testid="stAlert"] *,
+div[data-testid="stNotification"] *,
+div[data-testid="stCodeBlock"] *,
+div[data-testid="stMarkdownContainer"] pre *,
+div[data-testid="stMarkdownContainer"] code * {
+    color: #EAFBFF !important;
+}
+div[data-testid="stException"] {
+    border-left: 4px solid #7C3AED !important;
+    box-shadow: 0 0 0 1px rgba(124,58,237,.16) inset !important;
+}
+div[data-testid="stException"] pre,
+div[data-testid="stException"] code {
+    background: #0B1730 !important;
+    color: #EAFBFF !important;
+}
+
+/* Fourth replay card */
+.cfds-live-card-blue {
+    border-color: rgba(56,213,255,.55) !important;
+}
+.cfds-live-card-blue span { color:#8BDCFB !important; }
+.cfds-live-card-blue em { color:#BFD7EA !important; }
+
+</style>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
+
+/* CFDS replay deck fill: keep old format but use the right side evenly */
+.cfds-replay-action-side {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(170px, 1fr)) !important;
+    gap: .65rem !important;
+    align-content: start !important;
+}
+@media (max-width: 768px) {
+    .cfds-replay-action-side {
+        grid-template-columns: 1fr !important;
+    }
+    .cfds-live-card-green,
+    .cfds-live-card-blue {
+        display: none !important;
+    }
 }
 
 </style>
