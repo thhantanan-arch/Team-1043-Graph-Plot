@@ -2771,25 +2771,23 @@ def render_launch_live_graph_dashboard(payload: dict, mobile_fast: bool = True) 
         unsafe_allow_html=True,
     )
 
-    live_items = [
-        ("Mission time", bool(time_col), time_col or "missing"),
-        ("Temperature", bool(temp_col), temp_col or "missing"),
-        ("GPS position", bool(lat_col and lon_col), f"{lat_col or 'missing'} / {lon_col or 'missing'}"),
-        ("Received packets", bool(packet_col), packet_col or "missing"),
-        ("Lost packets", bool(lost_col or packet_col), (lost_col or "derived from packet count" if packet_col else "missing")),
-        ("FSW state", bool(state_col), state_col or "missing"),
-        ("5 plotted/displayable fields", available_plot_fields >= 5, f"{available_plot_fields}/5 fields"),
-    ]
-    live_rows = []
-    for name, ok, detail in live_items:
-        status = "✅ HAVE" if ok else "⚠️ CHECK"
-        live_rows.append(_cfds_row("Launch Live Evidence", name, status, detail, "live/replay dashboard"))
-
-    st.markdown(
-        '<div class="cfds-live-note">Mission 3D graph removed. This section now focuses on Launch scoresheet evidence only: required live fields, packet monitoring, and replay/live readiness.</div>',
-        unsafe_allow_html=True,
-    )
-    _cfds_render_evidence_table(live_rows, "launch_live_evidence_compact_table")
+    # Original live graph format restored: Altitude / Power / Environment tabs.
+    # Only the Live Graph was removed.
+    tabs = st.tabs(["Altitude", "Power", "Environment"])
+    for tab, (title, fields) in zip(tabs, plot_groups):
+        with tab:
+            active_fields = [(label, col) for label, col in fields if col]
+            if not active_fields:
+                st.info(f"No usable columns found for {title}.")
+            else:
+                fig = _cfds_make_live_field_fig(df, frame_df, active_fields, title, mobile_fast)
+                st.plotly_chart(
+                    fig,
+                    width="stretch",
+                    theme=None,
+                    config={"displaylogo": False, "responsive": True, "displayModeBar": not mobile_fast},
+                    key=f"cfds_live_{title.lower()}",
+                )
 
 
 # --- Score Evidence / Rubric Checker -------------------------------------------------
@@ -3428,17 +3426,28 @@ st.markdown(
 
 
 # Mascot card: Elfaria Albis Serfort.
-# Previous builds hid the mascot inside a collapsed expander, so it looked missing.
-# Keep this visible but compact on the main page; the image file must be in repo root as elfaria_mascot.png.
+# Visible compact lore panel. The mascot image file must be in repo root as elfaria_mascot.png.
 _mascot_path = Path(__file__).with_name("elfaria_mascot.png")
 if _mascot_path.exists():
     st.markdown('<div class="cfds-section-banner">DAEDALUS ASSISTANT</div>', unsafe_allow_html=True)
-    m1, m2 = st.columns([0.22, 0.78], gap="small")
+    m1, m2 = st.columns([0.20, 0.80], gap="small")
     with m1:
-        st.image(str(_mascot_path), width=132)
+        st.image(str(_mascot_path), width=138)
     with m2:
-        st.markdown("**Elfaria Albis Serfort** — CFDS assistant mascot")
-        st.caption("Quick identity panel for the CanSat Flight Data Studio. Keep `elfaria_mascot.png` in the same folder as `streamlit_app.py`.")
+        st.markdown("""
+        <div class="cfds-mascot-lore">
+          <div class="cfds-mascot-name">Elfaria Albis Serfort</div>
+          <div class="cfds-mascot-role">CFDS assistant mascot • created by <b>Rimuya</b></div>
+          <div class="cfds-mascot-story">
+            Elfaria was chosen as the Daedalus CFDS guide to make flight-log checking feel less empty and more mission-focused.
+            Her role is to sit beside the graph engine, remind the team about evidence quality, and keep the Launch/PFR workflow clear.
+          </div>
+          <div class="cfds-mascot-tags">
+            <span>Graph helper</span><span>Rubric checker</span><span>Mission companion</span>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.caption("Keep `elfaria_mascot.png` in the same folder as `streamlit_app.py`.")
 else:
     st.warning("Mascot image missing: upload `elfaria_mascot.png` to the repo root beside `streamlit_app.py`.")
 
