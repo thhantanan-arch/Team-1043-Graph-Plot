@@ -1978,6 +1978,76 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
 
 
 
+
+def _cfds_style_old_plotly_animation_controls(fig, mobile_fast: bool = False):
+    """Restore the old CFDS animated graph control look.
+    Keeps Play/Pause and jump buttons embedded in Plotly, but styles them like the old CFDS dark cyan chips.
+    """
+    try:
+        if fig is None:
+            return fig
+
+        menus = list(fig.layout.updatemenus) if fig.layout.updatemenus else []
+        styled_menus = []
+        for idx, menu in enumerate(menus):
+            m = menu.to_plotly_json() if hasattr(menu, "to_plotly_json") else dict(menu)
+            # Main Play/Pause menu stays left. Event jump chips sit beside it.
+            is_jump = idx > 0 or any("↦" in str(b.get("label", "")) for b in m.get("buttons", []))
+            m.update({
+                "type": "buttons",
+                "direction": "right",
+                "showactive": False,
+                "bgcolor": "#071827",
+                "bordercolor": "#38D5FF",
+                "borderwidth": 1,
+                "font": {"color": "#EAFBFF", "size": 11 if mobile_fast else 12, "family": "Inter, Arial, sans-serif"},
+                "pad": {"l": 3, "r": 3, "t": 3, "b": 3},
+                "xanchor": "left",
+                "yanchor": "top",
+            })
+            if is_jump:
+                m["x"] = 0.18 if not mobile_fast else 0.20
+                m["y"] = 1.075 if not mobile_fast else 1.105
+            else:
+                m["x"] = 0.012
+                m["y"] = 1.075 if not mobile_fast else 1.105
+            styled_menus.append(m)
+
+        sliders = list(fig.layout.sliders) if fig.layout.sliders else []
+        styled_sliders = []
+        for slider in sliders:
+            s = slider.to_plotly_json() if hasattr(slider, "to_plotly_json") else dict(slider)
+            s.update({
+                "x": 0.03,
+                "y": -0.10 if not mobile_fast else -0.13,
+                "len": 0.92,
+                "xanchor": "left",
+                "yanchor": "top",
+                "pad": {"t": 10, "b": 0, "l": 0, "r": 0},
+                "bgcolor": "#071827",
+                "bordercolor": "#38D5FF",
+                "borderwidth": 1,
+                "activebgcolor": "#102A52",
+                "font": {"color": "#EAFBFF", "size": 10 if mobile_fast else 11},
+                "currentvalue": {
+                    "prefix": "t = ",
+                    "suffix": " s",
+                    "font": {"size": 11 if mobile_fast else 12, "color": "#EAFBFF"},
+                    "visible": True,
+                },
+            })
+            styled_sliders.append(s)
+
+        fig.update_layout(
+            updatemenus=styled_menus,
+            sliders=styled_sliders,
+            margin=dict(l=58 if mobile_fast else 66, r=10 if mobile_fast else 28, t=78 if mobile_fast else 68, b=112 if mobile_fast else 105),
+        )
+        return fig
+    except Exception:
+        return fig
+
+
 def _inject_state_jump_buttons(fig, full_df, frame_duration_ms: int = 40):
     """Add compact Plotly jump controls to the chart itself.
 
@@ -2281,11 +2351,10 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             _inject_state_jump_buttons(fig, replay_df, frame_duration)
         except Exception:
             pass
+        fig = _cfds_style_old_plotly_animation_controls(fig, mobile_fast=mobile_fast)
 
-        # Mobile portrait fix: desktop stays unchanged, but phone screens should not
-        # render Plotly updatemenus/sliders inside the chart because they compress
-        # the plotting area into a narrow vertical strip. External jump chips remain
-        # in the action deck above the graph.
+        # Mobile portrait fix: keep the old embedded Play/Pause and jump controls,
+        # but use tighter margins and hide the modebar on phones so the chart is not squeezed.
         replay_config = {
             "displayModeBar": True,
             "displaylogo": False,
@@ -4751,6 +4820,63 @@ st.markdown("""
 .js-plotly-plot .slider-grip-rect:active {
     fill: #102A52 !important;
     stroke: #7C3AED !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
+
+/* CFDS old-style embedded Plotly animation buttons */
+.js-plotly-plot .updatemenu-container,
+.js-plotly-plot .slider-container {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+.js-plotly-plot .updatemenu-item-rect {
+    fill: #071827 !important;
+    stroke: #38D5FF !important;
+    stroke-width: 1.1px !important;
+    rx: 12px !important;
+    ry: 12px !important;
+    filter: drop-shadow(0 0 5px rgba(56,213,255,.10));
+}
+.js-plotly-plot .updatemenu-item-text {
+    fill: #EAFBFF !important;
+    font-weight: 800 !important;
+    font-size: 12px !important;
+}
+.js-plotly-plot .updatemenu-item-rect:hover,
+.js-plotly-plot .updatemenu-item-rect:active {
+    fill: #102A52 !important;
+    stroke: #7C3AED !important;
+}
+.js-plotly-plot .slider-rail-rect {
+    fill: #29485A !important;
+    stroke: #1E526C !important;
+    rx: 8px !important;
+    ry: 8px !important;
+}
+.js-plotly-plot .slider-grip-rect {
+    fill: #FF4D6D !important;
+    stroke: #EAFBFF !important;
+    rx: 8px !important;
+    ry: 8px !important;
+}
+.js-plotly-plot .slider-label,
+.js-plotly-plot .slider-current-value {
+    fill: #EAFBFF !important;
+}
+@media (max-width: 768px) {
+    .js-plotly-plot .updatemenu-item-text {
+        font-size: 11px !important;
+    }
+    .js-plotly-plot .updatemenu-container,
+    .js-plotly-plot .slider-container {
+        display: block !important;
+    }
 }
 
 </style>
