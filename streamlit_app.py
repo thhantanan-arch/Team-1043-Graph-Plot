@@ -2108,11 +2108,9 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             key="replay_butter_mode_wide",
             help="Butter modes increase interpolation frames and clamp frame timing for smoother browser animation.",
         )
-    # Phone fix: browser-side Plotly animation + modebar is what causes the iPhone portrait graph to squeeze left.
-    # In mobile fast mode, keep the old replay layout but force manual scrub so Streamlit rerenders the chart at phone width.
-    if mobile_fast:
-        replay_engine = "Manual scrub fallback"
-
+    # Animated controls restored:
+    # Do NOT force mobile into manual fallback. The user can still choose Manual scrub fallback
+    # from the Replay engine selector, but Smooth browser animation keeps Plotly Play/Pause/slider controls.
     preset_frames = {"Battery Saver": 240, "iPhone Smooth": 420, "Butter": 720, "Ultra Butter": 1100}.get(butter_mode, max_points_default)
     max_limit = 1400 if butter_mode == "Ultra Butter" else 1100
     max_points = st.slider(
@@ -2246,7 +2244,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    if (not mobile_fast) and replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
+    if replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
         fig = None
         show_state_legend = True
         if graph_type == "GPS XY path":
@@ -2296,16 +2294,17 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
         }
         if mobile_fast:
+            # Keep embedded Plotly animation controls on mobile.
+            # Do not clear fig.layout.updatemenus or fig.layout.sliders; those are the old animated graph Play/Pause/timeline buttons.
             fig.update_layout(
-                updatemenus=[],
-                sliders=[],
                 height=560,
-                margin=dict(l=58, r=10, t=10, b=74),
+                margin=dict(l=58, r=10, t=34, b=96),
                 xaxis=dict(automargin=True, title_standoff=8, tickfont=dict(size=9), title_font=dict(size=10)),
                 yaxis=dict(automargin=True, title_standoff=7, tickfont=dict(size=9), title_font=dict(size=10)),
                 legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0.0, font=dict(size=9)),
                 modebar=dict(bgcolor="rgba(7,24,39,0.85)", color="#EAFBFF", activecolor="#38D5FF"),
             )
+            replay_config["displayModeBar"] = False
             replay_config["modeBarButtonsToRemove"] = [
                 "lasso2d", "select2d", "toImage", "zoomIn2d", "zoomOut2d",
                 "autoScale2d", "toggleSpikelines", "hoverCompareCartesian",
@@ -2328,7 +2327,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 chips.append(f'<div class="cfds-event-chip"><span>{name}</span><b>{tx:.1f} s</b></div>')
             if chips:
                 st.markdown('<div class="cfds-event-strip cfds-event-strip-wide">' + ''.join(chips) + '</div>', unsafe_allow_html=True)
-        st.markdown('<div class="cfds-replay-tipbar">GPS XY/XYZ and split motion graphs are now separated. Use embedded ▶ Play / ⏸ Pause for smooth replay; use Plotly reset axes after zoom/pan.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="cfds-replay-tipbar">GPS XY/XYZ and split motion graphs are now separated. Use embedded ▶ Play / ⏸ Pause for smooth replay; switch to Manual scrub fallback only if a phone browser feels heavy.</div>', unsafe_allow_html=True)
         return
 
     if replay_engine == "Smooth browser animation" and graph_type == "GPS map path":
@@ -4719,6 +4718,39 @@ st.markdown("""
     .cfds-live-card-blue {
         display: none !important;
     }
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
+
+/* CFDS restore embedded Plotly animation controls */
+@media (max-width: 768px) {
+    .js-plotly-plot .updatemenu-container,
+    .js-plotly-plot .slider-container {
+        display: block !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+    }
+    .js-plotly-plot .updatemenu-item-rect,
+    .js-plotly-plot .slider-rail-rect,
+    .js-plotly-plot .slider-grip-rect {
+        stroke: #38D5FF !important;
+    }
+    .js-plotly-plot .updatemenu-item-text,
+    .js-plotly-plot .slider-label,
+    .js-plotly-plot .slider-current-value {
+        fill: #EAFBFF !important;
+    }
+}
+/* Keep click flash non-white */
+.js-plotly-plot .updatemenu-item-rect:active,
+.js-plotly-plot .slider-grip-rect:active {
+    fill: #102A52 !important;
+    stroke: #7C3AED !important;
 }
 
 </style>
