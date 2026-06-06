@@ -2108,6 +2108,11 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
             key="replay_butter_mode_wide",
             help="Butter modes increase interpolation frames and clamp frame timing for smoother browser animation.",
         )
+    # Phone fix: browser-side Plotly animation + modebar is what causes the iPhone portrait graph to squeeze left.
+    # In mobile fast mode, keep the old replay layout but force manual scrub so Streamlit rerenders the chart at phone width.
+    if mobile_fast:
+        replay_engine = "Manual scrub fallback"
+
     preset_frames = {"Battery Saver": 240, "iPhone Smooth": 420, "Butter": 720, "Ultra Butter": 1100}.get(butter_mode, max_points_default)
     max_limit = 1400 if butter_mode == "Ultra Butter" else 1100
     max_points = st.slider(
@@ -2231,7 +2236,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         </div>
         ''', unsafe_allow_html=True)
 
-    if replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
+    if (not mobile_fast) and replay_engine == "Smooth browser animation" and graph_type != "GPS map path":
         fig = None
         show_state_legend = True
         if graph_type == "GPS XY path":
@@ -2374,8 +2379,8 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         else:
             fig = _make_gps_xy_animation_fig(gps_df, replay_df, frame_duration_ms=0)
             if fig is not None:
-                fig.update_layout(updatemenus=[], sliders=[])
-                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                fig.update_layout(updatemenus=[], sliders=[], autosize=True, height=430 if mobile_fast else 620, margin=dict(l=52, r=8, t=10, b=52) if mobile_fast else None)
+                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
             else:
                 chart_slot.info("GPS XY path needs more valid points.")
     elif graph_type == "GPS XYZ path":
@@ -2385,7 +2390,7 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         else:
             fig = _make_gps_xyz_fig(gps_df)
             if fig is not None:
-                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True})
+                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True})
             else:
                 chart_slot.info("GPS XYZ path needs more valid points.")
     elif graph_type in ("Acceleration XYZ", "Gyro XYZ", "Angular velocity XYZ", "Tilt XYZ"):
@@ -2395,8 +2400,8 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
         else:
             fig = _make_v1256_multitrace_animation_fig(plot_df, label, replay_df, graph_type, frame_duration_ms=0)
             if fig is not None:
-                fig.update_layout(updatemenus=[], sliders=[], height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
-                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                fig.update_layout(updatemenus=[], sliders=[], autosize=True, height=430 if mobile_fast else 680, margin=dict(l=52, r=8, t=10, b=52) if mobile_fast else dict(l=62, r=24, t=34, b=74), dragmode="pan", xaxis=dict(automargin=True, domain=[0.0, 1.0]), yaxis=dict(automargin=True, domain=[0.0, 1.0]))
+                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
             else:
                 chart_slot.info("No numeric data available yet for this replay frame.")
     else:
@@ -2409,8 +2414,8 @@ def render_flight_replay(payload: dict, mobile_fast: bool = True) -> None:
                 chart_slot.info("No numeric data available yet for this replay frame.")
             else:
                 fig = _make_v1256_replay_fig(plot_df, label, replay_df, graph_type, t_now)
-                fig.update_layout(height=620 if mobile_fast else 680, margin=dict(l=62, r=24, t=34, b=74), dragmode="pan")
-                chart_slot.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": True, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
+                fig.update_layout(autosize=True, height=430 if mobile_fast else 680, margin=dict(l=52, r=8, t=10, b=52) if mobile_fast else dict(l=62, r=24, t=34, b=74), dragmode="pan", xaxis=dict(automargin=True, domain=[0.0, 1.0]), yaxis=dict(automargin=True, domain=[0.0, 1.0]))
+                chart_slot.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": not mobile_fast, "displaylogo": False, "responsive": True, "scrollZoom": True, "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"]})
     st.markdown(_state_legend_strip_html(replay_df), unsafe_allow_html=True)
     chips = []
     for tx, name, _color in _event_markers_for_replay(replay_df)[:6]:
@@ -3262,6 +3267,132 @@ st.markdown(
         text-shadow: 0 0 10px rgba(56,213,255,.20);
     }
 
+
+
+
+    /* iPhone portrait graph fix: prevent Plotly from squeezing into a narrow left column. */
+    @media (max-width: 768px) {
+        .stPlotlyChart,
+        div[data-testid="stPlotlyChart"],
+        div[data-testid="stPlotlyChart"] > div {
+            width: calc(100vw - 18px) !important;
+            max-width: calc(100vw - 18px) !important;
+            min-width: calc(100vw - 18px) !important;
+            overflow: hidden !important;
+        }
+        .js-plotly-plot,
+        .plot-container,
+        .svg-container {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 100% !important;
+        }
+        .modebar,
+        .modebar-container {
+            display: none !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+        [data-testid="stSlider"] {
+            width: calc(100vw - 22px) !important;
+            max-width: calc(100vw - 22px) !important;
+        }
+        .cfds-mini-help {
+            max-width: calc(100vw - 18px) !important;
+            overflow-wrap: anywhere !important;
+        }
+    }
+
+    /* CFDS click/focus flash override
+       Requirement: any temporary flash from click/focus/active should not be white.
+       Use a dark violet-blue accent so it is visible but still fits the CFDS dark theme. */
+    :root {
+        --cfds-click-bg: #0B1730;
+        --cfds-click-bg-2: #102A52;
+        --cfds-click-border: #7C3AED;
+        --cfds-click-glow: rgba(124, 58, 237, .34);
+        --cfds-click-text: #EAFBFF;
+    }
+
+    @keyframes cfds-click-violet-pulse {
+        0%   { box-shadow: 0 0 0 0 rgba(124,58,237,.00); background-color: #071827; }
+        45%  { box-shadow: 0 0 0 4px rgba(124,58,237,.18); background-color: #102A52; }
+        100% { box-shadow: 0 0 0 0 rgba(124,58,237,.00); background-color: #071827; }
+    }
+
+    .stButton > button:hover,
+    .stButton > button:focus,
+    .stButton > button:focus-visible,
+    .stButton > button:active,
+    .stDownloadButton > button:hover,
+    .stDownloadButton > button:focus,
+    .stDownloadButton > button:focus-visible,
+    .stDownloadButton > button:active,
+    button:hover,
+    button:focus,
+    button:focus-visible,
+    button:active {
+        background: var(--cfds-click-bg-2) !important;
+        border-color: var(--cfds-click-border) !important;
+        color: var(--cfds-click-text) !important;
+        outline: 2px solid var(--cfds-click-glow) !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 2px rgba(124,58,237,.18) inset !important;
+    }
+
+    .stButton > button:active,
+    .stDownloadButton > button:active,
+    .cfds-play-chip:active,
+    .cfds-skip-chip:active,
+    .cfds-state-pill:active,
+    .cfds-uploaded-chip:active {
+        animation: cfds-click-violet-pulse .65s ease-out 1;
+    }
+
+    div[data-baseweb="select"]:focus-within,
+    div[data-baseweb="input"]:focus-within,
+    div[data-testid="stFileUploader"] section:focus-within,
+    div[data-testid="stFileUploader"] section:hover,
+    input:focus,
+    textarea:focus {
+        background-color: var(--cfds-click-bg) !important;
+        border-color: var(--cfds-click-border) !important;
+        box-shadow: 0 0 0 2px rgba(124,58,237,.16) !important;
+        outline: 2px solid rgba(124,58,237,.28) !important;
+        outline-offset: 2px !important;
+    }
+
+    div[data-testid="stCheckbox"] [data-baseweb="checkbox"] > div,
+    label[data-baseweb="checkbox"] > div,
+    label[data-baseweb="checkbox"] span:first-child,
+    div[data-testid="stCheckbox"] span:first-child {
+        background-color: #071827 !important;
+        border-color: var(--cfds-click-border) !important;
+    }
+
+    div[data-testid="stCheckbox"]:active span:first-child,
+    label[data-baseweb="checkbox"]:active span:first-child,
+    div[data-testid="stCheckbox"]:focus-within span:first-child,
+    label[data-baseweb="checkbox"]:focus-within span:first-child {
+        background-color: var(--cfds-click-bg-2) !important;
+        border-color: var(--cfds-click-border) !important;
+        box-shadow: 0 0 0 2px rgba(124,58,237,.20) !important;
+    }
+
+    div[data-testid="stProgress"] > div > div > div > div {
+        background: linear-gradient(90deg, #102A52, #7C3AED, #38D5FF) !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stButton > button:active,
+        .stDownloadButton > button:active,
+        .cfds-play-chip:active,
+        .cfds-skip-chip:active,
+        .cfds-state-pill:active,
+        .cfds-uploaded-chip:active {
+            animation: none !important;
+        }
+    }
 
     /* Score sheet evidence table: dark custom table, no white Streamlit dataframe header */
     .cfds-table-wrap {
@@ -4478,5 +4609,40 @@ st.markdown("""
         margin-bottom: 0.25rem !important;
     }
 }
+</style>
+""", unsafe_allow_html=True)
+
+
+st.markdown("""
+<style>
+
+/* FINAL CFDS iPHONE PORTRAIT OVERRIDE — placed last so it wins over older mobile CSS */
+@media (max-width: 768px) {
+    .stPlotlyChart,
+    div[data-testid="stPlotlyChart"],
+    div[data-testid="stPlotlyChart"] > div,
+    div[data-testid="stPlotlyChart"] iframe {
+        width: calc(100vw - 18px) !important;
+        max-width: calc(100vw - 18px) !important;
+        min-width: calc(100vw - 18px) !important;
+        overflow: hidden !important;
+    }
+    .js-plotly-plot,
+    .plot-container,
+    .svg-container,
+    .main-svg {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 100% !important;
+    }
+    .modebar,
+    .modebar-container {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+    .cfds-live-card-green { display: none !important; }
+}
+
 </style>
 """, unsafe_allow_html=True)
