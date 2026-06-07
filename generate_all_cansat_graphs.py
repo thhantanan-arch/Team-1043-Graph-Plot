@@ -1153,39 +1153,88 @@ def generate_multi_axis(df, outdir):
             fig.subplots_adjust(right=0.84,hspace=0.16)
             p=outdir/f"{key}_compared_stacked{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
-        # Tilt-only compare outputs. Keep this narrow: do not alter acceleration/gyro/angular families.
-        if key == "tilt" and len(cols) >= 3:
-            pairs = [(0, 1, "roll_pitch"), (0, 2, "roll_yaw"), (1, 2, "pitch_yaw")]
+        # Compare outputs: compare = stacked graph comparison.
+        # IMPORTANT PROJECT RULE:
+        # - Compare 2 = 2 subplots stacked vertically, one axis per row.
+        # - Compare 3 = 3 subplots stacked vertically, one axis per row.
+        # - NOT two/three lines in one axes.
+        # This keeps the same timebase while letting each axis remain readable.
+        if len(cols) >= 2:
+            def _axis_tag(idx, lab):
+                low = str(lab).lower()
+                if any(k in low for k in ["roll", " accel r", "gyro r", " r", "current 1", "target 1"]):
+                    return "r" if "1" not in low else "1"
+                if any(k in low for k in ["pitch", " accel p", "gyro p", " p", "current 2", "target 2"]):
+                    return "p" if "2" not in low else "2"
+                if any(k in low for k in ["yaw", " accel y", "gyro y", " y", "current 3", "target 3"]):
+                    return "y" if "3" not in low else "3"
+                return f"axis{idx+1}"
+
+            compare_ylim = TILT_VIEW_YLIM if key == "tilt" else ylim
+
+            def _save_stacked_compare(indices, title_suffix, filename_suffix, dual=False):
+                n = len(indices)
+                fig, axes = plt.subplots(n, 1, figsize=(16.2, 2.9*n + 1.4), sharex=True, sharey=True)
+                if n == 1:
+                    axes = [axes]
+                fig.patch.set_facecolor("white")
+                for ax, idx in zip(axes, indices):
+                    y = ys[idx]
+                    c = colors[idx % len(colors)]
+                    lab = labels[idx]
+                    add_state_background(ax, segs)
+                    ax.plot(x, y, color=c, lw=2.35, alpha=0.96, zorder=5)
+                    ax.set_ylabel(label_with_unit(lab, unit), fontsize=10.5)
+                    ax.set_xlim(*xlim)
+                    ax.set_ylim(*compare_ylim)
+                    if key == "tilt":
+                        apply_tilt_axis_style(ax)
+                    ax.grid(True, which="major", color=GRID, alpha=0.22, linewidth=0.62)
+                    ax.grid(True, which="minor", color=GRID, alpha=0.09, linewidth=0.32)
+                    if key != "tilt":
+                        ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+                        ax.yaxis.set_minor_locator(AutoMinorLocator(3))
+                    ax.spines["top"].set_visible(False)
+                    ax.spines["right"].set_visible(False)
+                    if dual:
+                        attach_altitude_axis(ax, g)
+                axes[0].set_title(f"{name} {title_suffix}" + (" + Altitude" if dual else ""), fontsize=19, fontweight="bold", pad=12)
+                axes[-1].set_xlabel("Mission Time Relative to Launch (s)", fontsize=12)
+                axes[-1].xaxis.set_major_locator(MultipleLocator(20))
+                axes[-1].xaxis.set_minor_locator(MultipleLocator(5))
+                fig.text(0.012, 0.5, unit, va="center", rotation="vertical", fontsize=12)
+                handles = [Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
+                handles += [Line2D([0],[0], color=colors[idx % len(colors)], lw=2.35, label=label_with_unit(labels[idx], unit)) for idx in indices]
+                if dual:
+                    handles.append(Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude"))
+                fig.legend(handles=handles, title=name.upper(), loc="center left", bbox_to_anchor=(0.885, 0.5), fontsize=8.9, title_fontsize=10, frameon=True)
+                fig.subplots_adjust(right=0.84, hspace=0.16)
+                p = outdir / f"{key}_{filename_suffix}{'_dual_altitude' if dual else ''}_candidate_v2.png"
+                savefig(fig, p)
+                outputs.extend([p, p.with_suffix(".svg")])
+
+            pairs = []
+            for i in range(len(cols)):
+                for j in range(i + 1, len(cols)):
+                    tag = f"{_axis_tag(i, labels[i])}_{_axis_tag(j, labels[j])}"
+                    pairs.append((i, j, tag))
+
             for dual in [False, True]:
                 for i, j, tag in pairs:
-                    fig, ax = plt.subplots(figsize=(16.4, 7.2)); fig.patch.set_facecolor("white")
-                    add_state_background(ax, segs)
-                    ax.plot(x, ys[i], color=colors[i], lw=1.95, alpha=0.92, zorder=5)
-                    ax.plot(x, ys[j], color=colors[j], lw=1.95, alpha=0.82, zorder=5)
-                    basic_time_style(ax, f"{name} Compare 2 — {labels[i]} vs {labels[j]}" + (" + Altitude" if dual else ""), unit, xlim, TILT_VIEW_YLIM)
-                    apply_tilt_axis_style(ax)
-                    handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
-                             Line2D([0],[0],color=colors[i],lw=1.95,label=label_with_unit(labels[i], unit)),
-                             Line2D([0],[0],color=colors[j],lw=1.95,label=label_with_unit(labels[j], unit))]
-                    if dual:
-                        attach_altitude_axis(ax,g)
-                        handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
-                    ax.legend(handles=handles,title="TILT",loc="upper left",bbox_to_anchor=(1.012,0.76),fontsize=8.9,title_fontsize=10,frameon=True)
-                    p=outdir/f"tilt_compare_2_{tag}{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
+                    _save_stacked_compare(
+                        [i, j],
+                        f"Compare 2 — {labels[i]} / {labels[j]}",
+                        f"compare_2_{tag}",
+                        dual=dual,
+                    )
+                if len(cols) >= 3:
+                    _save_stacked_compare(
+                        [0, 1, 2],
+                        f"Compare 3 — {labels[0]} / {labels[1]} / {labels[2]}",
+                        "compare_3_all_axes",
+                        dual=dual,
+                    )
 
-                fig, ax = plt.subplots(figsize=(16.4, 7.2)); fig.patch.set_facecolor("white")
-                add_state_background(ax, segs)
-                handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
-                for y,c,lab in zip(ys[:3],colors[:3],labels[:3]):
-                    ax.plot(x, y, color=c, lw=1.85, alpha=0.86, zorder=5)
-                    handles.append(Line2D([0],[0],color=c,lw=1.85,label=label_with_unit(lab, unit)))
-                basic_time_style(ax, f"{name} Compare 3 — Roll / Pitch / Yaw" + (" + Altitude" if dual else ""), unit, xlim, TILT_VIEW_YLIM)
-                apply_tilt_axis_style(ax)
-                if dual:
-                    attach_altitude_axis(ax,g)
-                    handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
-                ax.legend(handles=handles,title="TILT",loc="upper left",bbox_to_anchor=(1.012,0.76),fontsize=8.9,title_fontsize=10,frameon=True)
-                p=outdir/f"tilt_compare_3_all_axes{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
     return outputs
 
 # ---------------- CONOPS ----------------
