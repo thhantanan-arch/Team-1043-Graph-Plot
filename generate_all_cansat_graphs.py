@@ -525,8 +525,9 @@ def generate_velocity(df, outdir):
     ax.fill_between([payload_t, end_t], 2, 8, color=c2, alpha=0.150, lw=0, zorder=1)
     ax.plot(t[stage1], rate[stage1], color=c1, lw=2.35, zorder=5)
     ax.plot(t[stage2], rate[stage2], color=c2, lw=2.35, zorder=5)
-    ax.hlines(s1, 0, payload_t, color=c1, lw=3, zorder=6)
-    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, zorder=6)
+    # HOTFIX23: velocity average/reference lines must be dashed, not solid.
+    ax.hlines(s1, 0, payload_t, color=c1, lw=3, linestyle="--", zorder=6)
+    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, linestyle="--", zorder=6)
     velocity_base(ax, "Descent Control — Two-stage Average Descent Rate", "Descent Rate (m/s)", payload_t, end_t, (0, 20))
     ax.legend(handles=[
         Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
@@ -534,8 +535,8 @@ def generate_velocity(df, outdir):
         Patch(facecolor=c2, alpha=0.150, label="Stage 2 rule: 2–8 m/s"),
         Line2D([0],[0], color=c1, lw=2.35, label="Stage 1 rate"),
         Line2D([0],[0], color=c2, lw=2.35, label="Stage 2 rate"),
-        Line2D([0],[0], color=c1, lw=3, label=f"Average parachute: {s1:.2f} m/s"),
-        Line2D([0],[0], color=c2, lw=3, label=f"Average paraglider: {s2:.2f} m/s"),
+        Line2D([0],[0], color=c1, lw=3, linestyle="--", label=f"Average parachute: {s1:.2f} m/s"),
+        Line2D([0],[0], color=c2, lw=3, linestyle="--", label=f"Average paraglider: {s2:.2f} m/s"),
     ], title="DESCENT CONTROL", loc="upper left", bbox_to_anchor=(1.012,0.76), fontsize=8.9, title_fontsize=10, frameon=True)
     p = outdir/"velocity_descent_control_candidate_v7_no_internal_text.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
@@ -564,8 +565,9 @@ def generate_velocity(df, outdir):
     ax.fill_between([payload_t, end_t], 2, 8, color=c2, alpha=0.150, lw=0, zorder=1)
     ax.plot(t[stage1], rate[stage1], color=c1, lw=2.35, zorder=5)
     ax.plot(t[stage2], rate[stage2], color=c2, lw=2.35, zorder=5)
-    ax.hlines(s1, 0, payload_t, color=c1, lw=3, zorder=6)
-    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, zorder=6)
+    # HOTFIX23: velocity average/reference lines must be dashed, not solid.
+    ax.hlines(s1, 0, payload_t, color=c1, lw=3, linestyle="--", zorder=6)
+    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, linestyle="--", zorder=6)
     velocity_base(ax, "Two-stage Descent Rate — Rule Trend + Altitude", "Descent Rate (m/s)", payload_t, end_t, (0,20.7))
     ax2 = ax.twinx()
     ax2.plot(td, ad, color=c_alt, lw=3)
