@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import traceback
 from datetime import datetime
@@ -140,7 +139,7 @@ def infer_state_from_altitude(df: pd.DataFrame) -> pd.Series:
     if n == 0:
         return pd.Series([], dtype=object)
 
-    arr = alt.to_numpy(dtype=float)
+    arr = alt.to_numpy(dtype=float, copy=True)
     finite = pd.Series(arr).replace([float("inf"), float("-inf")], pd.NA).dropna()
     if finite.empty:
         states = pd.Series(["ASCENT"] * n, index=df.index, dtype=object)
@@ -321,8 +320,8 @@ def _linear_descent_fit(df: pd.DataFrame, t0: float, t1: float, trim_start_s: fl
             "window_end_s": end_t,
         }
 
-    x = seg["T_REPORT"].to_numpy(dtype=float)
-    y = seg["ALTITUDE"].to_numpy(dtype=float)
+    x = seg["T_REPORT"].to_numpy(dtype=float, copy=True)
+    y = seg["ALTITUDE"].to_numpy(dtype=float, copy=True)
     x0 = x - x.mean()  # improves numerical conditioning
     slope, intercept_centered = np.polyfit(x0, y, 1)
     intercept = intercept_centered - slope * x.mean()
@@ -381,8 +380,8 @@ def _advanced_column_statistics(df: pd.DataFrame, time_col: str = "T_REPORT") ->
             t = pd.to_numeric(df[time_col], errors="coerce")
             fit_df = pd.DataFrame({"t": t, "y": s}).dropna()
             if len(fit_df) >= 3 and float(fit_df["t"].max() - fit_df["t"].min()) != 0 and float(fit_df["y"].max() - fit_df["y"].min()) != 0:
-                x = fit_df["t"].to_numpy(float)
-                y = fit_df["y"].to_numpy(float)
+                x = fit_df["t"].to_numpy(dtype=float, copy=True)
+                y = fit_df["y"].to_numpy(dtype=float, copy=True)
                 slope, intercept_centered = np.polyfit(x - x.mean(), y, 1)
                 intercept = intercept_centered - slope * x.mean()
                 pred = slope * x + intercept
@@ -729,8 +728,6 @@ def main() -> int:
     parser.add_argument("--csv", required=True, help="Input log: CSV or Excel")
     parser.add_argument("--out", required=True, help="Output folder")
     parser.add_argument("--mode", choices=["all", "quick"], default="all", help="Generation mode")
-    parser.add_argument("--speed", choices=["fast", "quality"], default="fast", help="Web export speed profile")
-    parser.add_argument("--families", default="", help="Comma-separated graph family keys to generate. Empty means preset/default.")
     args = parser.parse_args()
 
     source_path = Path(args.csv).resolve()
@@ -744,13 +741,6 @@ def main() -> int:
     print(f"[worker] Source log: {source_path}", flush=True)
     print(f"[worker] Output: {out_dir}", flush=True)
     print(f"[worker] Mode: {args.mode}", flush=True)
-    print(f"[worker] Speed profile: {args.speed}", flush=True)
-    if args.speed == "fast":
-        os.environ["CFDS_SKIP_SVG"] = "1"
-        os.environ["CFDS_PNG_DPI"] = "160"
-    else:
-        os.environ["CFDS_SKIP_SVG"] = "0"
-        os.environ["CFDS_PNG_DPI"] = "300"
 
     if not source_path.exists():
         raise FileNotFoundError(f"Log file not found: {source_path}")
@@ -778,25 +768,18 @@ def main() -> int:
         except Exception:
             pass
 
-        selected_families = [x.strip() for x in str(args.families).split(",") if x.strip()]
-
-        if args.mode == "quick" and not selected_families:
+        if args.mode == "quick":
             print("[worker] Generating quick altitude preview...", flush=True)
             df = pd.read_csv(normalized_csv)
             generated = generate_altitude(df, out_dir)
         else:
-            if selected_families:
-                print(f"[worker] Updating selected graph families: {selected_families}", flush=True)
-                generated = generate_all(normalized_csv, out_dir, selected_families=selected_families)
-            else:
-                print("[worker] Updating all graph families...", flush=True)
-                generated = generate_all(normalized_csv, out_dir)
+            print("[worker] Updating all graph families...", flush=True)
+            generated = generate_all(normalized_csv, out_dir)
 
         generated_names = [Path(p).name for p in generated]
         manifest = {
             "status": "success",
             "mode": args.mode,
-            "selected_families": selected_families if "selected_families" in locals() else [],
             "started": started,
             "finished": datetime.now().isoformat(timespec="seconds"),
             "source_log": str(source_path),
@@ -823,7 +806,6 @@ def main() -> int:
         write_json(out_dir / "studio_manifest.json", {
             "status": "error",
             "mode": args.mode,
-            "selected_families": selected_families if "selected_families" in locals() else [],
             "started": started,
             "failed": datetime.now().isoformat(timespec="seconds"),
             "source_log": str(source_path),
