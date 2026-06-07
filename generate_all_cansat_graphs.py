@@ -188,7 +188,7 @@ def event_context_from_time_aligned(data, time_col="T", alt_col="ALTITUDE", stat
 
 
 def _valid_timebase_series(t: pd.Series) -> bool:
-    arr = pd.to_numeric(t, errors="coerce").to_numpy(dtype=float)
+    arr = pd.to_numeric(t, errors="coerce").to_numpy(dtype=float, copy=True)
     finite = np.isfinite(arr)
     if finite.sum() < 3:
         return False
@@ -213,10 +213,10 @@ def choose_timebase_and_launch(data, packet_col="PACKET_COUNT", state_col="STATE
     packet = pd.to_numeric(data[packet_col], errors="coerce")
     alt = pd.to_numeric(data[alt_col], errors="coerce").interpolate(limit_direction="both").bfill().ffill()
     states = data[state_col].astype(str) if state_col in data.columns else pd.Series([""] * len(data), index=data.index)
-    ascent_idx = np.where(states.eq("ASCENT").to_numpy())[0]
+    ascent_idx = np.where(states.eq("ASCENT").to_numpy(copy=True))[0]
     first_ascent_pos = int(ascent_idx[0]) if len(ascent_idx) else None
 
-    arr = alt.to_numpy(float)
+    arr = alt.to_numpy(dtype=float, copy=True)
     if first_ascent_pos is not None and first_ascent_pos > 3:
         base_slice = arr[max(0, first_ascent_pos - 40):first_ascent_pos]
     else:
@@ -278,8 +278,8 @@ def prepare_launch_window(df, columns, packet_col="PACKET_COUNT", state_col="STA
 def altitude_context(g):
     if g is None or len(g) == 0:
         raise ValueError("No altitude rows available for altitude context.")
-    x = g["T"].to_numpy(float)
-    y = g["ALTITUDE"].to_numpy(float)
+    x = g["T"].to_numpy(dtype=float, copy=True)
+    y = g["ALTITUDE"].to_numpy(dtype=float, copy=True)
     pre = x < 0
     post = x >= 0
     baseline = float(np.nanmedian(y[pre])) if pre.any() else float(y[0])
@@ -292,8 +292,8 @@ def altitude_context(g):
         x_post[0] = 1.0 / FS
     tmp = pd.DataFrame({"x": np.concatenate([[0.0], x_post]),
                         "y": np.concatenate([[baseline], y_post])}).groupby("x", as_index=False).median()
-    xs = tmp["x"].to_numpy(float)
-    ys = tmp["y"].to_numpy(float)
+    xs = tmp["x"].to_numpy(dtype=float, copy=True)
+    ys = tmp["y"].to_numpy(dtype=float, copy=True)
     ys = np.maximum(smooth_series(ys, 41), 0.0)
     ys[0] = baseline
     xd = np.linspace(0, float(xs.max()), 1800)
@@ -395,9 +395,9 @@ def generate_altitude(df, outdir):
 # ---------------- VELOCITY ----------------
 def prepare_velocity(df):
     g = prepare_launch_window(df, [])
-    x_all = g["T"].to_numpy(float)
-    y_all = np.maximum(smooth_series(g["ALTITUDE"].to_numpy(float), 31), 0.0)
-    states = g["STATE"].astype(str).to_numpy()
+    x_all = g["T"].to_numpy(dtype=float, copy=True)
+    y_all = np.maximum(smooth_series(g["ALTITUDE"].to_numpy(dtype=float, copy=True), 31), 0.0)
+    states = g["STATE"].astype(str).to_numpy(copy=True)
     ap_idx = int(np.nanargmax(y_all))
     ap_t = float(x_all[ap_idx])
     pr_rows = g[g["STATE"].eq("PAYLOAD_RELEASE")]
@@ -415,9 +415,9 @@ def prepare_velocity(df):
         ALT=("ALT", "median"),
         STATE=("STATE", mode_or_first),
     ).sort_values("T").reset_index(drop=True)
-    t = tmpv["T"].to_numpy(float)
-    alt = tmpv["ALT"].to_numpy(float)
-    st = tmpv["STATE"].astype(str).to_numpy()
+    t = tmpv["T"].to_numpy(dtype=float, copy=True)
+    alt = tmpv["ALT"].to_numpy(dtype=float, copy=True)
+    st = tmpv["STATE"].astype(str).to_numpy(copy=True)
     payload_t = pr_t_abs - ap_t
     end_t = land_t_abs - ap_t
     if len(t) < 3 or float(np.nanmax(t) - np.nanmin(t)) <= 0:
@@ -539,8 +539,8 @@ def iqr_filter(x, y, k=1.5):
 
 def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
     g = prepare_launch_window(df, [col])
-    x = g["T"].to_numpy(float)
-    y = g[col].to_numpy(float)
+    x = g["T"].to_numpy(dtype=float, copy=True)
+    y = g[col].to_numpy(dtype=float, copy=True)
     ys = smooth_series(y, 41)
     segs = make_segments(g)
     xlim = (-PRE_LAUNCH, float(x.max()))
@@ -654,8 +654,8 @@ def generate_gps(df, outdir):
     lat = smooth_series(g["GPS_LAT"], 13)
     lon = smooth_series(g["GPS_LON"], 13)
     alt = np.maximum(smooth_series(g["ALTITUDE"], 31), 0)
-    t = g["T"].to_numpy(float)
-    states = g["STATE"].astype(str).to_numpy()
+    t = g["T"].to_numpy(dtype=float, copy=True)
+    states = g["STATE"].astype(str).to_numpy(copy=True)
     ap = int(np.nanargmax(alt))
     pr_idx = np.where(states=="PAYLOAD_RELEASE")[0]
     pr = int(pr_idx[0]) if len(pr_idx) else None
@@ -827,7 +827,7 @@ def generate_multi_axis(df, outdir):
     for key,name,cols,labels,unit in families:
         if not all(c in df.columns for c in cols): continue
         g = prepare_launch_window(df, cols)
-        x = g["T"].to_numpy(float); segs = make_segments(g); ys=[g[c].to_numpy(float) for c in cols]
+        x = g["T"].to_numpy(dtype=float, copy=True); segs = make_segments(g); ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
         xlim=(-PRE_LAUNCH,float(x.max())); ylim=global_ylim(ys)
         # focus overview + each axis, normal and dual
         for dual in [False, True]:
