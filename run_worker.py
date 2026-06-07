@@ -728,7 +728,19 @@ def main() -> int:
     parser.add_argument("--csv", required=True, help="Input log: CSV or Excel")
     parser.add_argument("--out", required=True, help="Output folder")
     parser.add_argument("--mode", choices=["all", "quick"], default="all", help="Generation mode")
-    args = parser.parse_args()
+    # Streamlit UI compatibility flags. Older run_worker.py rejected these, causing:
+    # "unrecognized arguments: --speed fast --families ...".
+    # The graph-selection/export filter is controlled by the Streamlit side; the worker
+    # accepts these flags so the subprocess contract stays stable across UI versions.
+    parser.add_argument("--speed", default="fast", choices=["fast", "balanced", "quality"], help="UI speed profile; accepted for compatibility")
+    parser.add_argument("--families", default="", help="Comma-separated graph families requested by the UI; accepted for compatibility")
+    args, unknown_args = parser.parse_known_args()
+    if unknown_args:
+        print(f"[worker] Ignoring unknown compatibility arguments: {unknown_args}")
+    if args.families:
+        print(f"[worker] Requested families: {args.families}")
+    if args.speed:
+        print(f"[worker] Speed profile: {args.speed}")
 
     source_path = Path(args.csv).resolve()
     out_dir = Path(args.out).resolve()
