@@ -218,6 +218,7 @@ def _read_excel_all_sheets(path: Path) -> Tuple[pd.DataFrame, Dict[str, object]]
         if forced_sheet in sheet_reports:
             sheet_reports[forced_sheet]["used"] = True
             sheet_reports[forced_sheet]["selection_reason"] = "forced_by_CFDS_EXCEL_SHEET"
+        out = out.copy(deep=True)
         return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "forced_single_sheet", "selected_sheet": forced_sheet}
 
     if concat_mode and valid_frames:
@@ -226,19 +227,21 @@ def _read_excel_all_sheets(path: Path) -> Tuple[pd.DataFrame, Dict[str, object]]
             sheet_reports[name]["used"] = True
             sheet_reports[name]["selection_reason"] = "concat_mode"
             frames.append(sdf)
-        out = pd.concat(frames, ignore_index=True, sort=False)
+        out = pd.concat(frames, ignore_index=True, sort=False).copy(deep=True)
         return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "concat_all_valid_sheets"}
 
     if valid_frames:
         score, order, selected_name, selected = sorted(valid_frames, key=lambda item: (-item[0], item[1]))[0]
         sheet_reports[selected_name]["used"] = True
         sheet_reports[selected_name]["selection_reason"] = "selected_best_single_flight_sheet"
+        selected = selected.copy(deep=True)
         return selected, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "single_best_flight_sheet", "selected_sheet": str(selected_name)}
 
     first_name = next(iter(sheets.keys())) if sheets else "Sheet1"
     out = sheets[first_name] if sheets else pd.DataFrame()
     out, _ = _rename_columns(out)
     out["SOURCE_SHEET"] = first_name
+    out = out.copy(deep=True)
     return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "fallback_first_sheet", "selected_sheet": first_name}
 
 
@@ -249,7 +252,7 @@ def infer_state_from_altitude(df: pd.DataFrame) -> pd.Series:
     n = len(alt)
     if n == 0:
         return pd.Series([], dtype=object)
-    arr = alt.to_numpy(dtype=float)
+    arr = alt.to_numpy(dtype=float, copy=True)
     finite = arr[np.isfinite(arr)]
     if len(finite) == 0:
         return pd.Series(["ASCENT"] * n, index=df.index, dtype=object)
@@ -286,9 +289,9 @@ def detect_altitude_launch_trigger(df: pd.DataFrame, fs_hz: float = 5.0) -> Dict
         return {"launch_packet": np.nan, "method": "unavailable", "baseline_m": np.nan, "threshold_m": np.nan}
 
     alt = pd.to_numeric(work["ALTITUDE"], errors="coerce").interpolate(limit_direction="both").bfill().ffill().to_numpy(dtype=float)
-    pkt = pd.to_numeric(work["PACKET_COUNT"], errors="coerce").to_numpy(dtype=float)
+    pkt = pd.to_numeric(work["PACKET_COUNT"], errors="coerce").to_numpy(dtype=float, copy=True)
     state = work["STATE"].astype(str) if "STATE" in work.columns else pd.Series([""] * len(work))
-    ascent_pos = np.where(state.eq("ASCENT").to_numpy())[0]
+    ascent_pos = np.where(state.eq("ASCENT").to_numpy(copy=True))[0]
     first_ascent_pos = int(ascent_pos[0]) if len(ascent_pos) else None
 
     if first_ascent_pos is not None and first_ascent_pos > 3:
@@ -373,7 +376,7 @@ def _mission_time_seconds(values: pd.Series) -> Tuple[pd.Series, Dict[str, objec
     # numeric seconds first, but reject stuck columns
     numeric = pd.to_numeric(vals, errors="coerce")
     if numeric.notna().sum() >= 3:
-        arr = numeric.to_numpy(dtype=float)
+        arr = numeric.to_numpy(dtype=float, copy=True)
         finite = np.isfinite(arr)
         if finite.sum() >= 3:
             rng = float(np.nanmax(arr[finite]) - np.nanmin(arr[finite]))
@@ -398,7 +401,7 @@ def _mission_time_seconds(values: pd.Series) -> Tuple[pd.Series, Dict[str, objec
             ok.append(False)
     ser = pd.Series(out, index=values.index, dtype=float)
     if ser.notna().sum() >= 3:
-        arr = ser.to_numpy(dtype=float)
+        arr = ser.to_numpy(dtype=float, copy=True)
         # unwrap midnight if needed
         add = 0.0
         prev = np.nan
