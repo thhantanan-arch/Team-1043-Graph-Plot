@@ -44,7 +44,7 @@ COLUMN_ALIASES = {
     "MODE": ["MODE", "FLIGHT_MODE"],
     "STATE": ["STATE", "FLIGHT_STATE", "FLIGHT STATE", "STATUS"],
     "ALTITUDE": ["ALTITUDE", "ALT", "ALTITUDE_M", "BARO_ALTITUDE", "BMP_ALTITUDE"],
-    "TEMPERATURE": ["TEMPERATURE", "TEMP", "TEMP_C", "TEMPERATURE_C"],
+    "TEMPERATURE": ["TEMPERATURE", "TEMP", "TEMP_C", "TEMPERATURE_C", "ALT0_TEMPERATURE", "ALT0 TEMP", "ALT0_TEMP", "ALT1_TEMPERATURE"],
     "PRESSURE": ["PRESSURE", "PRES", "PRESSURE_KPA"],
     "VOLTAGE": ["VOLTAGE", "VOLT", "VBAT", "BATTERY_VOLTAGE"],
     "CURRENT": ["CURRENT", "CURR", "CURRENT_A", "CURRENT_MA"],
@@ -551,6 +551,15 @@ def normalize_log_file(source_path: Path, out_dir: Path) -> Path:
     for col, val in optional_defaults.items():
         if col not in raw.columns:
             raw[col] = val
+
+    # v0.5.16: Temperature fallback for logs that store sensor temperature as ALT0_TEMPERATURE.
+    # Do not let an empty canonical TEMPERATURE column make the graph family unavailable
+    # when the source log has a valid temperature sensor column.
+    if "TEMPERATURE" in raw.columns and pd.to_numeric(raw["TEMPERATURE"], errors="coerce").notna().sum() < 2:
+        for temp_src in ["ALT0_TEMPERATURE", "ALT1_TEMPERATURE", "CPU_TEMP"]:
+            if temp_src in raw.columns and pd.to_numeric(raw[temp_src], errors="coerce").notna().sum() >= 2:
+                raw["TEMPERATURE"] = pd.to_numeric(raw[temp_src], errors="coerce")
+                break
 
     # Keep any extra columns too, but put canonical columns first.
     front = [c for c in CANONICAL_ORDER if c in raw.columns]
