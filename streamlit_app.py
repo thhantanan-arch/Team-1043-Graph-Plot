@@ -1194,7 +1194,7 @@ V1256_STATE_BORDERS = {
     "PAYLOAD_RELEASE": "#FFC08A",
     "LANDED": "#E2E8F0",
 }
-V1256_STAGE_ALPHA = 0.13
+V1256_STAGE_ALPHA = 0.17
 V1256_LINE_COLORS = {
     "Altitude": "#66E8FF",
     "Velocity / Descent rate": "#1d4ed8",
@@ -1437,7 +1437,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
     t_max = float(full_df["__REPLAY_TIME_S"].max())
     for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
         # Visible separation: each state band has a colored fill plus a brighter border.
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)),
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.13, min(float(alpha), 0.21)),
                       line_width=1.7, line_color=border)
         fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
     # final boundary line
@@ -1525,7 +1525,7 @@ def _make_v1256_replay_animation_fig(plot_df, label: str, full_df, graph_type: s
     for x0, x1, state, color, border, alpha in stage_rects:
         # Keep state text out of the plot. Use border + boundary line for visibility.
         fig.add_vrect(
-            x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)),
+            x0=x0, x1=x1, fillcolor=color, opacity=max(0.13, min(float(alpha), 0.21)),
             line_width=1.7, line_color=border
         )
         fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
@@ -1693,7 +1693,7 @@ def _make_v1256_multitrace_animation_fig(plot_df, label: str, full_df, graph_typ
     y0, y1 = y_min - pad, y_max + pad
     fig = go.Figure()
     for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
-        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.08, min(float(alpha), 0.13)), line_width=1.5, line_color=border)
+        fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.11, min(float(alpha), 0.18)), line_width=1.5, line_color=border)
         fig.add_vline(x=x0, line_width=1.0, line_color=border, line_dash="solid", opacity=0.90)
     # static full traces
     for axn, arr in zip(axes, y_arrays):
@@ -1943,7 +1943,7 @@ def _make_v1256_replay_fig(plot_df, label: str, full_df, graph_type: str, frame_
             return None
         fig = go.Figure()
         for x0, x1, state, color, border, alpha in _v1256_stage_rects(full_df):
-            fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.10, min(float(alpha), 0.16)), line_width=1.7, line_color=border)
+            fig.add_vrect(x0=x0, x1=x1, fillcolor=color, opacity=max(0.13, min(float(alpha), 0.21)), line_width=1.7, line_color=border)
             fig.add_vline(x=x0, line_width=1.15, line_color=border, line_dash="solid", opacity=0.95)
         fig.add_trace(go.Scatter(x=d["Mission time (s)"], y=d["Planned CONOPS (m)"], mode="lines", name="Planned CONOPS", line=dict(color="#CBD5E1", width=2.6, dash="dash")))
         fig.add_trace(go.Scatter(x=d["Mission time (s)"], y=d["Actual altitude (m)"], mode="lines", name="Actual CONOPS", line=dict(color="#66E8FF", width=3.4, shape="spline", smoothing=1.15)))
