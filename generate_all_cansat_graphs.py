@@ -47,7 +47,7 @@ TEXT = "#1F2937"
 ALT_COLOR = "#0B6FA4"
 DARK = "#070B17"
 
-# v0.5.21 compare rule: Compare 2/3 are stacked subplot graphs, not multi-line overlay.
+# v0.5.22 compare rule: Compare 2/3 are stacked subplot graphs; Angular Velocity compare is explicitly forced and row-scaled.
 # v0.5.12 graph visibility: stronger state bands and measured-end behavior.
 STATE_BG_ALPHA = 0.145
 STATE_STRIP_ALPHA = 0.985
@@ -1127,6 +1127,7 @@ def generate_multi_axis(df, outdir):
                 ax.legend(handles=handles,title=name.upper(),loc="upper left",bbox_to_anchor=(1.012,0.76),fontsize=8.9,title_fontsize=10,frameon=True)
                 p=outdir/f"{key}_{mode}{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
         # compared stacked normal and dual
+        # HOTFIX22: stacked rows use per-row y-limits for non-tilt data. This is critical for Angular Velocity.
         for dual in [False, True]:
             fig, axes = plt.subplots(len(cols),1,figsize=(16.2,2.9*len(cols)+1.4),sharex=True,sharey=False)
             if len(cols)==1: axes=[axes]
@@ -1135,7 +1136,9 @@ def generate_multi_axis(df, outdir):
                 add_state_background(ax,segs)
                 ax.plot(x,y,color=c,lw=2.35,zorder=5)
                 ax.set_ylabel(label_with_unit(lab, unit),fontsize=10.5)
-                ax.set_xlim(*xlim); ax.set_ylim(*ylim)
+                ax.set_xlim(*xlim)
+                row_ylim = TILT_VIEW_YLIM if key == "tilt" else global_ylim([y])
+                ax.set_ylim(*row_ylim)
                 if key == "tilt":
                     apply_tilt_axis_style(ax)
                 ax.grid(True,which="major",color=GRID,alpha=0.22,linewidth=0.62)
@@ -1154,7 +1157,7 @@ def generate_multi_axis(df, outdir):
             fig.subplots_adjust(right=0.84,hspace=0.16)
             p=outdir/f"{key}_compared_stacked{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
-        # HOTFIX21 ACTIVE: Compare outputs are stacked graph comparisons only.
+        # HOTFIX22 ACTIVE: Compare outputs are stacked graph comparisons only; Angular Velocity uses this path too.
         # Compare outputs: compare = stacked graph comparison.
         # IMPORTANT PROJECT RULE:
         # - Compare 2 = 2 subplots stacked vertically, one axis per row.
@@ -1172,7 +1175,9 @@ def generate_multi_axis(df, outdir):
                     return "y" if "3" not in low else "3"
                 return f"axis{idx+1}"
 
-            compare_ylim = TILT_VIEW_YLIM if key == "tilt" else ylim
+            # Do not use one shared y-scale for compare rows. Angular velocity can have one noisy axis
+            # that crushes the others if a global ylim is forced. Use per-row ylim below.
+            compare_ylim = TILT_VIEW_YLIM if key == "tilt" else None
 
             def _save_stacked_compare(indices, title_suffix, filename_suffix, dual=False):
                 n = len(indices)
@@ -1188,7 +1193,8 @@ def generate_multi_axis(df, outdir):
                     ax.plot(x, y, color=c, lw=2.35, alpha=0.96, zorder=5)
                     ax.set_ylabel(label_with_unit(lab, unit), fontsize=10.5)
                     ax.set_xlim(*xlim)
-                    ax.set_ylim(*compare_ylim)
+                    row_ylim = compare_ylim if key == "tilt" else global_ylim([y])
+                    ax.set_ylim(*row_ylim)
                     if key == "tilt":
                         apply_tilt_axis_style(ax)
                     ax.grid(True, which="major", color=GRID, alpha=0.22, linewidth=0.62)
