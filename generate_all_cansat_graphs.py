@@ -47,7 +47,7 @@ TEXT = "#1F2937"
 ALT_COLOR = "#0B6FA4"
 DARK = "#070B17"
 
-# v0.5.22 compare rule: Compare 2/3 are stacked subplot graphs; Angular Velocity compare is explicitly forced and row-scaled.
+# v0.5.23 compare rule: Compare 2/3 are stacked subplot graphs; fixed Angular Velocity filename tags by column order.
 # v0.5.12 graph visibility: stronger state bands and measured-end behavior.
 STATE_BG_ALPHA = 0.145
 STATE_STRIP_ALPHA = 0.985
@@ -525,9 +525,8 @@ def generate_velocity(df, outdir):
     ax.fill_between([payload_t, end_t], 2, 8, color=c2, alpha=0.150, lw=0, zorder=1)
     ax.plot(t[stage1], rate[stage1], color=c1, lw=2.35, zorder=5)
     ax.plot(t[stage2], rate[stage2], color=c2, lw=2.35, zorder=5)
-    # HOTFIX23: velocity average/reference lines must be dashed, not solid.
-    ax.hlines(s1, 0, payload_t, color=c1, lw=3, linestyle="--", zorder=6)
-    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, linestyle="--", zorder=6)
+    ax.hlines(s1, 0, payload_t, color=c1, lw=3, zorder=6)
+    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, zorder=6)
     velocity_base(ax, "Descent Control — Two-stage Average Descent Rate", "Descent Rate (m/s)", payload_t, end_t, (0, 20))
     ax.legend(handles=[
         Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
@@ -535,8 +534,8 @@ def generate_velocity(df, outdir):
         Patch(facecolor=c2, alpha=0.150, label="Stage 2 rule: 2–8 m/s"),
         Line2D([0],[0], color=c1, lw=2.35, label="Stage 1 rate"),
         Line2D([0],[0], color=c2, lw=2.35, label="Stage 2 rate"),
-        Line2D([0],[0], color=c1, lw=3, linestyle="--", label=f"Average parachute: {s1:.2f} m/s"),
-        Line2D([0],[0], color=c2, lw=3, linestyle="--", label=f"Average paraglider: {s2:.2f} m/s"),
+        Line2D([0],[0], color=c1, lw=3, label=f"Average parachute: {s1:.2f} m/s"),
+        Line2D([0],[0], color=c2, lw=3, label=f"Average paraglider: {s2:.2f} m/s"),
     ], title="DESCENT CONTROL", loc="upper left", bbox_to_anchor=(1.012,0.76), fontsize=8.9, title_fontsize=10, frameon=True)
     p = outdir/"velocity_descent_control_candidate_v7_no_internal_text.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
@@ -565,9 +564,8 @@ def generate_velocity(df, outdir):
     ax.fill_between([payload_t, end_t], 2, 8, color=c2, alpha=0.150, lw=0, zorder=1)
     ax.plot(t[stage1], rate[stage1], color=c1, lw=2.35, zorder=5)
     ax.plot(t[stage2], rate[stage2], color=c2, lw=2.35, zorder=5)
-    # HOTFIX23: velocity average/reference lines must be dashed, not solid.
-    ax.hlines(s1, 0, payload_t, color=c1, lw=3, linestyle="--", zorder=6)
-    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, linestyle="--", zorder=6)
+    ax.hlines(s1, 0, payload_t, color=c1, lw=3, zorder=6)
+    ax.hlines(s2, payload_t, end_t, color=c2, lw=3, zorder=6)
     velocity_base(ax, "Two-stage Descent Rate — Rule Trend + Altitude", "Descent Rate (m/s)", payload_t, end_t, (0,20.7))
     ax2 = ax.twinx()
     ax2.plot(td, ad, color=c_alt, lw=3)
@@ -1167,15 +1165,16 @@ def generate_multi_axis(df, outdir):
         # - NOT two/three lines in one axes.
         # This keeps the same timebase while letting each axis remain readable.
         if len(cols) >= 2:
+            # HOTFIX23 ACTIVE:
+            # Do NOT infer compare filename tags from label substrings.
+            # Angular Velocity labels are "Roll Rate / Pitch Rate / Yaw Rate";
+            # the old substring check matched the " r" in "Rate", so Pitch/Yaw
+            # could be exported as compare_2_r_r and the web UI could not find
+            # the expected compare_2_p_y / compare_2_r_p files. Use column order.
             def _axis_tag(idx, lab):
-                low = str(lab).lower()
-                if any(k in low for k in ["roll", " accel r", "gyro r", " r", "current 1", "target 1"]):
-                    return "r" if "1" not in low else "1"
-                if any(k in low for k in ["pitch", " accel p", "gyro p", " p", "current 2", "target 2"]):
-                    return "p" if "2" not in low else "2"
-                if any(k in low for k in ["yaw", " accel y", "gyro y", " y", "current 3", "target 3"]):
-                    return "y" if "3" not in low else "3"
-                return f"axis{idx+1}"
+                if key.startswith("servo"):
+                    return str(idx + 1)
+                return ["r", "p", "y"][idx] if idx < 3 else f"axis{idx+1}"
 
             # Do not use one shared y-scale for compare rows. Angular velocity can have one noisy axis
             # that crushes the others if a global ylim is forced. Use per-row ylim below.
