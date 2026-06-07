@@ -44,6 +44,11 @@ TEXT = "#1F2937"
 ALT_COLOR = "#0B6FA4"
 DARK = "#070B17"
 
+# Graph generation visibility patch: stronger state bands + altitude 80% reference.
+STATE_BG_ALPHA = 0.145
+STATE_STRIP_ALPHA = 0.985
+STATE_LEGEND_ALPHA = 0.46
+
 plt.rcParams.update({
     "font.family": "DejaVu Sans",
     "figure.dpi": 160,
@@ -103,7 +108,7 @@ def savefig(fig, path, svg=True):
         fig.savefig(path.with_suffix(".svg"), bbox_inches="tight", pad_inches=0.10, facecolor=fig.get_facecolor())
     plt.close(fig)
 
-def add_state_background(ax, segments, alpha=0.08, strip_alpha=0.92):
+def add_state_background(ax, segments, alpha=STATE_BG_ALPHA, strip_alpha=STATE_STRIP_ALPHA):
     for state, start, end in segments:
         ax.axvspan(start, end, ymin=0.0, ymax=0.948,
                    color=STATE_COLORS.get(state, "#EEEEEE"), alpha=alpha, lw=0, zorder=0)
@@ -301,6 +306,45 @@ def attach_altitude_axis(ax, g, color="#F28E2B"):
     ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
     return ax2
 
+
+def add_altitude_80_reference(ax, x, y, color="#30363D"):
+    """Add a dashed reference line at 80% of max altitude."""
+    arr = np.asarray(y, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return np.nan
+    max_alt = float(np.nanmax(arr))
+    if not np.isfinite(max_alt) or max_alt <= 0:
+        return np.nan
+    y80 = 0.80 * max_alt
+    ax.axhline(
+        y80,
+        color=color,
+        lw=1.55,
+        ls=(0, (6, 4)),
+        alpha=0.88,
+        zorder=4.7,
+    )
+    try:
+        xmin, xmax = ax.get_xlim()
+        ax.text(
+            xmax - 1.5,
+            y80 + max(8.0, max_alt * 0.010),
+            f"80% max altitude = {y80:.1f} m",
+            color=color,
+            fontsize=9.2,
+            ha="right",
+            va="bottom",
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor=color, alpha=0.72),
+            clip_on=True,
+            zorder=7,
+        )
+    except Exception:
+        pass
+    return y80
+
+
 # ---------------- ALTITUDE ----------------
 def generate_altitude(df, outdir):
     g = prepare_launch_window(df, [])
@@ -314,10 +358,14 @@ def generate_altitude(df, outdir):
     ax.set_xlim(-PRE_LAUNCH, float(g["T"].max()))
     ax.set_ylim(0, max(900, float(np.nanmax(y)) * 1.08))
     basic_time_style(ax, "Altitude Profile — Smooth", "Altitude (m)", (-PRE_LAUNCH, float(g["T"].max())), ax.get_ylim())
-    ax.legend(handles=[
-        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip"),
+    y80 = add_altitude_80_reference(ax, x, y)
+    legend_handles = [
+        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Line2D([0], [0], color=ALT_COLOR, lw=3, label="Smoothed altitude"),
-    ], title="ALTITUDE", loc="upper left", bbox_to_anchor=(1.012, 0.76), fontsize=9, title_fontsize=10, frameon=True)
+    ]
+    if np.isfinite(y80):
+        legend_handles.append(Line2D([0], [0], color="#30363D", lw=1.55, ls=(0, (6, 4)), label="80% max altitude"))
+    ax.legend(handles=legend_handles, title="ALTITUDE", loc="upper left", bbox_to_anchor=(1.012, 0.76), fontsize=9, title_fontsize=10, frameon=True)
     path = outdir / "altitude_smooth_p15q_v5_packet_time_3s_before_launch.png"
     savefig(fig, path)
     return [path, path.with_suffix(".svg")]
@@ -386,7 +434,7 @@ def generate_velocity(df, outdir):
     ax.hlines(s2, payload_t, end_t, color=c2, lw=3, zorder=6)
     velocity_base(ax, "Descent Control — Two-stage Average Descent Rate", "Descent Rate (m/s)", payload_t, end_t, (0, 20))
     ax.legend(handles=[
-        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip"),
+        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Patch(facecolor=c1, alpha=0.145, label="Stage 1 rule: 12–18 m/s"),
         Patch(facecolor=c2, alpha=0.150, label="Stage 2 rule: 2–8 m/s"),
         Line2D([0],[0], color=c1, lw=2.35, label="Stage 1 rate"),
@@ -408,7 +456,7 @@ def generate_velocity(df, outdir):
     ax.plot([payload_t,end_t], [b2, m2*(end_t-payload_t)+b2], color=c2, ls="--", lw=2.25)
     velocity_base(ax, "Velocity Plot — Altitude-Time Slope Trend", "Barometer Altitude (m)", payload_t, end_t, (0, max(1000, float(np.nanmax(alt))*1.1)))
     ax.legend(handles=[
-        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip"),
+        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Line2D([0],[0], color=c_alt, lw=3, label="Measured altitude"),
         Line2D([0],[0], color=c1, ls="--", lw=2.25, label=f"Parachute regression: {s1:.2f} m/s"),
         Line2D([0],[0], color=c2, ls="--", lw=2.25, label=f"Paraglider regression: {s2:.2f} m/s"),
@@ -433,7 +481,7 @@ def generate_velocity(df, outdir):
     ax2.spines["right"].set_color(c_alt)
     ax2.yaxis.set_major_locator(MultipleLocator(100))
     ax.legend(handles=[
-        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip"),
+        Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Patch(facecolor=c1, alpha=0.145, label="Stage 1 rule 12–18 m/s"),
         Patch(facecolor=c2, alpha=0.150, label="Stage 2 rule 2–8 m/s"),
         Line2D([0],[0], color=c1, lw=2.35, label="Stage 1 rate"),
@@ -479,7 +527,7 @@ def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
         fig, ax = plt.subplots(figsize=(16.8 if "dual" in kind else 16.4, 7.45 if "dual" in kind else 7.3))
         fig.patch.set_facecolor("white")
         add_state_background(ax, segs)
-        handles = [Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip")]
+        handles = [Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
         if kind == "line":
             ax.plot(x, y, color=color, lw=2.1, alpha=0.9, zorder=5)
             handles.append(Line2D([0],[0], color=color, lw=2.1, label=f"{sensor} raw line"))
@@ -625,7 +673,7 @@ def generate_gps(df, outdir):
     ax.plot(t,(lon-lon0)*1e5,color="#009E73",lw=2.1,zorder=5)
     ax.plot(t,alt/100,color="#CC79A7",lw=2.1,zorder=5)
     basic_time_style(ax, "GPS 3-Axis Time — Relative Lat/Lon + Altitude Scale", "Scaled value: lat/lon ×1e5, altitude ÷100", (-PRE_LAUNCH, float(t.max())))
-    ax.legend(handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32,label="State highlight / strip"),
+    ax.legend(handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA,label="State highlight / strip"),
                        Line2D([0],[0],color="#0072B2",lw=2.1,label="Latitude offset ×1e5"),
                        Line2D([0],[0],color="#009E73",lw=2.1,label="Longitude offset ×1e5"),
                        Line2D([0],[0],color="#CC79A7",lw=2.1,label="Altitude ÷100")],
@@ -640,7 +688,7 @@ def generate_gps(df, outdir):
     ax.plot(t, alt, color="#202020", lw=2.45, zorder=5)
     ax.plot(t, gps_rel, color="#4E79A7", lw=1.95, alpha=0.82, zorder=4)
     basic_time_style(ax, "GPS Altitude Check — GPS Relative vs Barometer", "Altitude (m)", (-PRE_LAUNCH, float(t.max())), (0, max(1000,float(np.nanmax(alt))*1.05)))
-    ax.legend(handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32,label="State highlight / strip"),
+    ax.legend(handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA,label="State highlight / strip"),
                        Line2D([0],[0],color="#202020",lw=2.45,label="Barometer altitude"),
                        Line2D([0],[0],color="#4E79A7",lw=1.95,label="GPS altitude relative")],
               title="GPS ALTITUDE CHECK", loc="upper left", bbox_to_anchor=(1.012,0.76), fontsize=9, title_fontsize=10, frameon=True)
@@ -754,7 +802,7 @@ def generate_multi_axis(df, outdir):
             for mode_i in [None]+list(range(len(cols))):
                 fig, ax = plt.subplots(figsize=(16.4,7.3)); fig.patch.set_facecolor("white")
                 add_state_background(ax,segs)
-                handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=0.32, label="State highlight / strip")]
+                handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
                 if mode_i is None:
                     for y,c,lab in zip(ys,colors,labels):
                         ax.plot(x,y,color=c,lw=2.2,alpha=0.94,zorder=5)
@@ -796,7 +844,7 @@ def generate_multi_axis(df, outdir):
             axes[-1].set_xlabel("Mission Time Relative to Launch (s)", fontsize=12)
             axes[-1].xaxis.set_major_locator(MultipleLocator(20)); axes[-1].xaxis.set_minor_locator(MultipleLocator(5))
             fig.text(0.012,0.5,unit,va="center",rotation="vertical",fontsize=12)
-            handles=[Patch(facecolor=STATE_COLORS["ASCENT"],alpha=0.32,label="State highlight / strip")] + [Line2D([0],[0],color=c,lw=2.35,label=label_with_unit(lab, unit)) for c,lab in zip(colors,labels)]
+            handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA,label="State highlight / strip")] + [Line2D([0],[0],color=c,lw=2.35,label=label_with_unit(lab, unit)) for c,lab in zip(colors,labels)]
             if dual: handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
             fig.legend(handles=handles,title=name.upper(),loc="center left",bbox_to_anchor=(0.885,0.5),fontsize=8.9,title_fontsize=10,frameon=True)
             fig.subplots_adjust(right=0.84,hspace=0.16)
