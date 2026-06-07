@@ -1,7 +1,6 @@
 
 from pathlib import Path
 import argparse
-import os
 import json
 import zipfile
 import shutil
@@ -44,7 +43,7 @@ TEXT = "#1F2937"
 ALT_COLOR = "#0B6FA4"
 DARK = "#070B17"
 
-# Graph generation visibility patch: stronger state bands + altitude 80% reference.
+# v0.5.12 graph visibility: stronger state bands and measured-end behavior.
 STATE_BG_ALPHA = 0.145
 STATE_STRIP_ALPHA = 0.985
 STATE_LEGEND_ALPHA = 0.46
@@ -95,16 +94,8 @@ def _shorten_path_if_needed(path):
 def savefig(fig, path, svg=True):
     path = _shorten_path_if_needed(Path(path))
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Web speed controls:
-    # CFDS_PNG_DPI=160 makes phone previews/export much faster than 300 dpi.
-    # CFDS_SKIP_SVG=1 skips duplicate SVG saves; this nearly halves full-export time.
-    try:
-        png_dpi = int(os.environ.get("CFDS_PNG_DPI", "300"))
-    except ValueError:
-        png_dpi = 300
-    skip_svg = os.environ.get("CFDS_SKIP_SVG", "0").strip().lower() in {"1", "true", "yes", "on"}
-    fig.savefig(path, bbox_inches="tight", pad_inches=0.10, dpi=png_dpi, facecolor=fig.get_facecolor())
-    if svg and not skip_svg:
+    fig.savefig(path, bbox_inches="tight", pad_inches=0.10, dpi=300, facecolor=fig.get_facecolor())
+    if svg:
         fig.savefig(path.with_suffix(".svg"), bbox_inches="tight", pad_inches=0.10, facecolor=fig.get_facecolor())
     plt.close(fig)
 
@@ -195,11 +186,28 @@ def event_context_from_time_aligned(data, time_col="T", alt_col="ALTITUDE", stat
             "landing_state_t": landing_state_t, "plot_end_t": plot_end_t}
 
 
+
+def _valid_timebase_series(t: pd.Series) -> bool:
+    arr = pd.to_numeric(t, errors="coerce").to_numpy(dtype=float)
+    finite = np.isfinite(arr)
+    if finite.sum() < 3:
+        return False
+    vals = arr[finite]
+    if float(np.nanmax(vals) - np.nanmin(vals)) <= 0:
+        return False
+    if len(np.unique(np.round(vals, 6))) < 3:
+        return False
+    # Allow small duplicates but reject lots of backwards jumps.
+    dif = np.diff(vals)
+    if (dif < -1e-9).sum() > max(2, len(dif) * 0.05):
+        return False
+    return True
+
 def choose_timebase_and_launch(data, packet_col="PACKET_COUNT", state_col="STATE", alt_col="ALTITUDE"):
     """Use normalized T_FROM_LAUNCH_S when available; otherwise use altitude-trigger launch."""
     if "T_FROM_LAUNCH_S" in data.columns:
         t = pd.to_numeric(data["T_FROM_LAUNCH_S"], errors="coerce")
-        if t.notna().sum() >= 3:
+        if _valid_timebase_series(t):
             return t, None, "T_FROM_LAUNCH_S"
 
     packet = pd.to_numeric(data[packet_col], errors="coerce")
@@ -308,7 +316,7 @@ def attach_altitude_axis(ax, g, color="#F28E2B"):
 
 
 def add_altitude_80_reference(ax, x, y, color="#30363D"):
-    """Add a dashed reference line at 80% of max altitude."""
+    """Add a dashed reference line at 80% of max measured altitude."""
     arr = np.asarray(y, dtype=float)
     arr = arr[np.isfinite(arr)]
     if arr.size == 0:
@@ -317,14 +325,7 @@ def add_altitude_80_reference(ax, x, y, color="#30363D"):
     if not np.isfinite(max_alt) or max_alt <= 0:
         return np.nan
     y80 = 0.80 * max_alt
-    ax.axhline(
-        y80,
-        color=color,
-        lw=1.55,
-        ls=(0, (6, 4)),
-        alpha=0.88,
-        zorder=4.7,
-    )
+    ax.axhline(y80, color=color, lw=1.55, ls=(0, (6, 4)), alpha=0.88, zorder=4.7)
     try:
         xmin, xmax = ax.get_xlim()
         ax.text(
@@ -345,6 +346,22 @@ def add_altitude_80_reference(ax, x, y, color="#30363D"):
     return y80
 
 
+def measured_end_context(g, time_col="T", alt_col="ALTITUDE", state_col="STATE"):
+    """Return final measured sample; do not synthesize a 0 m landing."""
+    if g is None or len(g) == 0 or time_col not in g.columns or alt_col not in g.columns:
+        return {"last_t": np.nan, "last_alt": np.nan, "landed": False, "reason": "no_data"}
+    d = g.dropna(subset=[time_col, alt_col]).copy()
+    if d.empty:
+        return {"last_t": np.nan, "last_alt": np.nan, "landed": False, "reason": "no_finite_altitude"}
+    last = d.iloc[-1]
+    last_t = float(last[time_col])
+    last_alt = float(last[alt_col])
+    state = str(last.get(state_col, "")).upper() if state_col in d.columns else ""
+    landed = (last_alt <= 2.0) or (state == "LANDED" and last_alt <= 10.0)
+    reason = "landed_or_ground" if landed else "last_measured_sample_above_ground"
+    return {"last_t": last_t, "last_alt": last_alt, "landed": bool(landed), "reason": reason}
+
+
 # ---------------- ALTITUDE ----------------
 def generate_altitude(df, outdir):
     g = prepare_launch_window(df, [])
@@ -355,6 +372,10 @@ def generate_altitude(df, outdir):
     fig.patch.set_facecolor("white")
     add_state_background(ax, segs)
     ax.plot(x, y, color=ALT_COLOR, lw=3.0, solid_capstyle="round", zorder=6)
+    end_info = measured_end_context(g)
+    ax.scatter([end_info["last_t"]], [end_info["last_alt"]], s=38, color="#30363D", edgecolor="white", linewidth=0.8, zorder=7)
+    if not end_info["landed"] and np.isfinite(end_info["last_t"]):
+        ax.text(end_info["last_t"], end_info["last_alt"] + max(12.0, float(np.nanmax(y))*0.018), f"last sample {end_info['last_alt']:.1f} m", color="#30363D", fontsize=8.8, ha="right", va="bottom", fontweight="bold", clip_on=True)
     ax.set_xlim(-PRE_LAUNCH, float(g["T"].max()))
     ax.set_ylim(0, max(900, float(np.nanmax(y)) * 1.08))
     basic_time_style(ax, "Altitude Profile — Smooth", "Altitude (m)", (-PRE_LAUNCH, float(g["T"].max())), ax.get_ylim())
@@ -362,6 +383,7 @@ def generate_altitude(df, outdir):
     legend_handles = [
         Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Line2D([0], [0], color=ALT_COLOR, lw=3, label="Smoothed altitude"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#30363D", markeredgecolor="white", markersize=6, label="Last measured sample"),
     ]
     if np.isfinite(y80):
         legend_handles.append(Line2D([0], [0], color="#30363D", lw=1.55, ls=(0, (6, 4)), label="80% max altitude"))
@@ -388,8 +410,18 @@ def prepare_velocity(df):
     t = x_all[mask] - ap_t
     alt = y_all[mask]
     st = states[mask]
+    # ensure strictly increasing time for gradient and interpolation
+    tmpv = pd.DataFrame({"T": t, "ALT": alt, "STATE": st}).groupby("T", as_index=False).agg(
+        ALT=("ALT", "median"),
+        STATE=("STATE", mode_or_first),
+    ).sort_values("T").reset_index(drop=True)
+    t = tmpv["T"].to_numpy(float)
+    alt = tmpv["ALT"].to_numpy(float)
+    st = tmpv["STATE"].astype(str).to_numpy()
     payload_t = pr_t_abs - ap_t
     end_t = land_t_abs - ap_t
+    if len(t) < 3 or float(np.nanmax(t) - np.nanmin(t)) <= 0:
+        raise ValueError("Velocity graph cannot be generated: invalid time axis after apogee.")
     rate_raw = -np.gradient(alt, t)
     rate = np.clip(smooth_series(rate_raw, 21), 0, 22)
     def reg_rate(x, yy):
@@ -857,11 +889,16 @@ def generate_conops(df, outdir):
     x_actual, y_actual, _ = altitude_context(g)
     ap_i = int(np.nanargmax(y_actual))
     ev = event_context_from_time_aligned(g, "T", "ALTITUDE", "STATE")
+    end_info = measured_end_context(g)
+    actual_landed = bool(np.isfinite(ev["landing_physical_t"]) or end_info.get("landed", False))
     events = {
         "actual_apogee_t": float(x_actual[ap_i]),
         "actual_apogee_alt": float(y_actual[ap_i]),
         "actual_payload_t": ev["payload_state_t"] if np.isfinite(ev["payload_state_t"]) else ev["payload_80_t"],
-        "actual_landing_t": ev["landing_physical_t"] if np.isfinite(ev["landing_physical_t"]) else float(g["T"].max())
+        "actual_landing_t": ev["landing_physical_t"] if np.isfinite(ev["landing_physical_t"]) else (end_info["last_t"] if actual_landed else np.nan),
+        "actual_end_t": end_info["last_t"],
+        "actual_end_alt": end_info["last_alt"],
+        "actual_landed": actual_landed,
     }
     events["actual_payload_alt"] = float(np.interp(events["actual_payload_t"], x_actual, y_actual)) if np.isfinite(events["actual_payload_t"]) else np.nan
     planned_t_apogee=11.2; planned_h_apogee=681.0; planned_h_payload=681.0*0.80
@@ -876,7 +913,8 @@ def generate_conops(df, outdir):
     for scale, fname in [("linear","conops_altitude_linear_actual_vs_planned_v6_pale_blue_frozen.png"),
                          ("log10","conops_altitude_log10_actual_vs_planned_v6_pale_blue_frozen.png"),
                          ("symlog","conops_altitude_symlog_actual_vs_planned_v6_pale_blue_frozen.png")]:
-        end_t=max(float(g["T"].max()), events["actual_landing_t"], planned_t_land)+1
+        actual_end_for_xlim = events["actual_landing_t"] if np.isfinite(events["actual_landing_t"]) else events["actual_end_t"]
+        end_t=max(float(g["T"].max()), actual_end_for_xlim, planned_t_land)+1
         xg=np.linspace(-PRE_LAUNCH,end_t,2400); yp=yplan(xg)
         ymax=max(900,float(np.nanmax(y_actual))*1.06,planned_h_apogee*1.2)
         ya=np.maximum(y_actual,1) if scale=="log10" else y_actual
@@ -896,11 +934,16 @@ def generate_conops(df, outdir):
         ax.text(end_t-1.8, 2+(ymax*0.006 if scale=="linear" else 0.4), "2 m", fontsize=9.5, color="#5F6F7D", ha="right", va="bottom")
         ax.plot(x_actual,ya,color=DARK,lw=2.85,zorder=6)
         ax.plot(xg,ypp,color=DARK,lw=2.45,ls=(0,(8,5)),zorder=5)
-        for x,c,actual in [(events["actual_apogee_t"],"#D62728",True),(planned_t_apogee,"#D62728",False),(events["actual_payload_t"],"#7E57C2",True),(planned_t_payload,"#7E57C2",False),(events["actual_landing_t"],"#2CA25F",True),(planned_t_land,"#2CA25F",False)]:
+        actual_land_or_end = events["actual_landing_t"] if np.isfinite(events["actual_landing_t"]) else events["actual_end_t"]
+        actual_end_label = "A Land" if events["actual_landed"] else "A Last"
+        for x,c,actual in [(events["actual_apogee_t"],"#D62728",True),(planned_t_apogee,"#D62728",False),(events["actual_payload_t"],"#7E57C2",True),(planned_t_payload,"#7E57C2",False),(actual_land_or_end,"#2CA25F",True),(planned_t_land,"#2CA25F",False)]:
             if np.isfinite(x): ax.axvline(x,color=c,ls="-" if actual else (0,(4,3)),lw=1.45 if actual else 1.35,alpha=0.88 if actual else 0.70,zorder=3)
         y_label = ymax*0.965 if scale=="linear" else (ymax/1.25 if scale=="log10" else ymax*0.94)
-        for x,txt,c in [(events["actual_apogee_t"],"A Apo","#D62728"),(planned_t_apogee,"P Apo","#D62728"),(events["actual_payload_t"],"A PR","#7E57C2"),(planned_t_payload,"P PR","#7E57C2"),(events["actual_landing_t"],"A Land","#2CA25F"),(planned_t_land,"P Land","#2CA25F")]:
+        for x,txt,c in [(events["actual_apogee_t"],"A Apo","#D62728"),(planned_t_apogee,"P Apo","#D62728"),(events["actual_payload_t"],"A PR","#7E57C2"),(planned_t_payload,"P PR","#7E57C2"),(actual_land_or_end,actual_end_label,"#2CA25F"),(planned_t_land,"P Land","#2CA25F")]:
             if np.isfinite(x): ax.text(x,y_label,txt,rotation=90,color=c,fontsize=8,fontweight="bold",ha="center",va="top",alpha=0.84,clip_on=True)
+        if not events["actual_landed"] and np.isfinite(events["actual_end_t"]) and scale == "linear":
+            ax.scatter([events["actual_end_t"]],[events["actual_end_alt"]],s=44,color="#30363D",edgecolor="white",linewidth=0.7,zorder=7)
+            ax.text(events["actual_end_t"], events["actual_end_alt"] + max(12.0, ymax*0.018), f"last sample {events['actual_end_alt']:.1f} m", fontsize=8.6, color="#30363D", ha="right", va="bottom", fontweight="bold", clip_on=True)
         ax.set_title(f"CONOPS {scale.upper()} — Actual vs Planned Mission Profile", fontsize=18, fontweight="bold", pad=12)
         ax.legend(handles=[Line2D([0],[0],color=DARK,lw=2.85,label="Actual altitude"),
                            Line2D([0],[0],color=DARK,lw=2.45,ls=(0,(8,5)),label="Planned altitude"),
@@ -909,7 +952,7 @@ def generate_conops(df, outdir):
         p=outdir/fname; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
     return outputs
 
-def generate_all(csv_path, output_dir, selected_families=None):
+def generate_all(csv_path, output_dir):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(csv_path)
@@ -924,12 +967,6 @@ def generate_all(csv_path, output_dir, selected_families=None):
         ("05_multi", "multi_axis", generate_multi_axis),
         ("06_conops", "conops", generate_conops),
     ]
-
-    if selected_families is not None:
-        selected_set = {str(x).strip().lower() for x in selected_families if str(x).strip()}
-        family_specs = [spec for spec in family_specs if spec[1] in selected_set]
-        if not family_specs:
-            print("[engine] No graph families selected; diagnostics/report only.", flush=True)
 
     diagnostics_dir = output_dir / "00_diagnostics"
     diagnostics_dir.mkdir(exist_ok=True)
@@ -984,7 +1021,6 @@ def generate_all(csv_path, output_dir, selected_families=None):
         "generated_count": len(generated),
         "generated_files": [str(Path(p).relative_to(output_dir)) for p in generated],
         "family_results": family_results,
-        "selected_families": [family_name for _, family_name, _ in family_specs],
         "families": [
             "altitude_smooth_p15q_v5_packet_time_3s_before_launch",
             "velocity_family_candidate_v7_no_internal_text",
