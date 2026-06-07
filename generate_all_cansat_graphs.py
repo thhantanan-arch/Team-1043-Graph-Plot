@@ -27,11 +27,10 @@ from scipy.interpolate import PchipInterpolator
 
 FS = 5.0
 PRE_LAUNCH = 3.0
-TILT_YLIM = (0.0, 360.0)  # display scale/ticks remain 0..360
-TILT_PLOT_YLIM = (-8.0, 368.0)  # tiny visual padding so 0/360 data does not sit on frame/state strip
-TILT_MAJOR_STEP = 90
+TILT_YLIM = (0.0, 360.0)  # logical tilt scale shown to the user
+TILT_VIEW_YLIM = (-60.0, 450.0)  # visual margin only; core tick scale remains 0..360 for readable tilt graphs
+TILT_MAJOR_TICKS = [0, 60, 120, 180, 240, 300, 360]  # keep the actual angle scale clean; margins are not labeled
 TILT_MINOR_STEP = 30
-TILT_DISPLAY_CLIP = (2.0, 358.0)  # plot-only clamp so traces never touch 0/360 frame lines
 POST_LANDED = 5.0
 
 STATE_COLORS = {
@@ -299,12 +298,51 @@ def altitude_context(g):
                         "y": np.concatenate([[baseline], y_post])}).groupby("x", as_index=False).median()
     xs = tmp["x"].to_numpy(dtype=float, copy=True)
     ys = tmp["y"].to_numpy(dtype=float, copy=True)
-    ys = np.maximum(smooth_series(ys, 41), 0.0)
+    # Altitude display smoothing must preserve the true apogee timing.
+    # A very wide window (41 samples) shifted the displayed peak out of the
+    # APOGEE/yellow zone.  Use a narrower plot-smoothing window so the peak
+    # stays aligned with the visible ascent/apogee state window while still
+    # keeping the descent curve smooth.
+    ys = np.maximum(smooth_series(ys, 15), 0.0)
     ys[0] = baseline
     xd = np.linspace(0, float(xs.max()), 1800)
     yd = np.maximum(PchipInterpolator(xs, ys)(xd), 0.0)
     yd[0] = baseline
     return np.concatenate([x_pre, xd]), np.concatenate([y_pre, yd]), baseline
+
+
+
+def altitude_smooth_metrics(g):
+    """Shared altitude metrics for plots/reports, derived from the plotted smooth curve.
+
+    Returns apogee and 80% values from altitude_context(g), not from raw packet
+    spikes.  This keeps the Apogee label, 80% reference line, and payload
+    release comparisons consistent with the visible altitude curve.
+    """
+    x, y, baseline = altitude_context(g)
+    if len(x) == 0 or not np.isfinite(y).any():
+        return {
+            "x": x, "y": y, "baseline": baseline,
+            "apogee_t": np.nan, "apogee_alt": np.nan,
+            "target80_alt": np.nan, "payload80_t": np.nan, "payload80_alt": np.nan,
+        }
+    ap_i = int(np.nanargmax(y))
+    ap_t = float(x[ap_i])
+    ap_alt = float(y[ap_i])
+    target80 = 0.80 * ap_alt if np.isfinite(ap_alt) else np.nan
+    payload80_t = np.nan
+    payload80_alt = np.nan
+    if np.isfinite(target80):
+        after = np.where((x > ap_t) & (y <= target80))[0]
+        if len(after):
+            payload80_t = float(x[int(after[0])])
+            payload80_alt = float(y[int(after[0])])
+    return {
+        "x": x, "y": y, "baseline": baseline,
+        "apogee_t": ap_t, "apogee_alt": ap_alt,
+        "target80_alt": target80, "payload80_t": payload80_t, "payload80_alt": payload80_alt,
+    }
+
 
 def attach_altitude_axis(ax, g, color="#F28E2B"):
     ax2 = ax.twinx()
@@ -321,7 +359,12 @@ def attach_altitude_axis(ax, g, color="#F28E2B"):
 
 
 def add_altitude_80_reference(ax, x, y, color="#30363D"):
-    """Add a dashed reference line at 80% of max measured altitude."""
+    """Add a dashed reference line at 80% of the *displayed smoothed* apogee.
+
+    Important: altitude labels/targets must be computed from the same smoothed
+    profile that is plotted on the graph.  Using the raw packet max here makes
+    the displayed apogee/80% line disagree with the smooth curve.
+    """
     arr = np.asarray(y, dtype=float)
     arr = arr[np.isfinite(arr)]
     if arr.size == 0:
@@ -370,7 +413,8 @@ def measured_end_context(g, time_col="T", alt_col="ALTITUDE", state_col="STATE")
 # ---------------- ALTITUDE ----------------
 def generate_altitude(df, outdir):
     g = prepare_launch_window(df, [])
-    x, y, baseline = altitude_context(g)
+    metrics = altitude_smooth_metrics(g)
+    x, y, baseline = metrics["x"], metrics["y"], metrics["baseline"]
     segs = make_segments(g)
 
     fig, ax = plt.subplots(figsize=(16.4, 7.3))
@@ -385,6 +429,19 @@ def generate_altitude(df, outdir):
     ax.set_ylim(0, max(900, float(np.nanmax(y)) * 1.08))
     basic_time_style(ax, "Altitude Profile — Smooth", "Altitude (m)", (-PRE_LAUNCH, float(g["T"].max())), ax.get_ylim())
     y80 = add_altitude_80_reference(ax, x, y)
+    try:
+        (outdir / "altitude_smooth_metrics.json").write_text(json.dumps({
+            "source": "displayed smoothed altitude curve",
+            "apogee_t_s": metrics.get("apogee_t"),
+            "apogee_alt_m": metrics.get("apogee_alt"),
+            "target80_alt_m": metrics.get("target80_alt"),
+            "payload80_crossing_t_s": metrics.get("payload80_t"),
+            "payload80_crossing_alt_m": metrics.get("payload80_alt"),
+            "last_sample_t_s": end_info.get("last_t"),
+            "last_sample_alt_m": end_info.get("last_alt"),
+        }, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     legend_handles = [
         Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
         Line2D([0], [0], color=ALT_COLOR, lw=3, label="Smoothed altitude"),
@@ -585,6 +642,69 @@ def robust_fit_mask(x, y, window=21, mad_k=7.5, min_keep=0.85):
 
     return mask_ordered[inv_order]
 
+
+def plot_voltage_state_fits(ax, x, y, states, line_width=2.65):
+    """Plot two separate voltage regression lines for Payload Release and Probe Release windows.
+
+    The visible scatter remains raw valid data; regression masks are applied only inside
+    each mission-state window so the early/late mission voltage behavior is not erased.
+
+    CFDS display rule: each state-specific fitted line is calculated from its own state
+    window, but drawn across the full visible mission x-range so the two trends are easy
+    to compare over the same time span.
+    """
+    state_arr = np.asarray(states).astype(str)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    full_x = x[np.isfinite(x)]
+    if len(full_x) >= 2:
+        visible_end = float(np.nanmax(full_x))
+        # CFDS voltage display rule:
+        # - the red Probe-release fit should begin at launch/launch-pad (x=0)
+        #   so the early-mission battery behavior is visible from the start.
+        # - the Payload-release fit starts at its state window and extends to mission end.
+        launch_x = 0.0 if visible_end >= 0 else float(np.nanmin(full_x))
+    else:
+        visible_end = None
+        launch_x = None
+    specs = [
+        ("PAYLOAD_RELEASE", "Payload release fit", "#6F4CC3", "--", "state_start_to_end"),
+        ("PROBE_RELEASE", "Probe release fit", "#D62728", "-.", "launch_to_state_end"),
+    ]
+    handles = []
+    for state_name, label, fit_color, ls, draw_mode in specs:
+        mask = (state_arr == state_name) & np.isfinite(x) & np.isfinite(y)
+        xs = x[mask]
+        yy = y[mask]
+        if len(xs) < 3:
+            continue
+        order = np.argsort(xs)
+        xs = xs[order]
+        yy = yy[order]
+        fit_mask = robust_fit_mask(xs, yy, window=min(17, max(5, len(xs)//2*2+1)), mad_k=8.0, min_keep=0.80)
+        if int(np.sum(fit_mask)) < 2:
+            fit_mask = np.ones(len(xs), dtype=bool)
+        if int(np.sum(fit_mask)) >= 2:
+            # Center x to reduce conditioning issues for long packet/time ranges.
+            xfit = xs[fit_mask]
+            yfit = yy[fit_mask]
+            x0 = float(np.nanmean(xfit))
+            m, b_centered = np.polyfit(xfit - x0, yfit, 1)
+            if visible_end is not None:
+                if draw_mode == "launch_to_state_end" and launch_x is not None:
+                    # Red probe-release trend: fit only the PROBE_RELEASE window,
+                    # but draw from launch pad / x=0 only until the end of that
+                    # PROBE_RELEASE window, not to mission end.
+                    fx = np.array([launch_x, float(np.nanmax(xs))], dtype=float)
+                else:
+                    fx = np.array([float(np.nanmin(xs)), visible_end], dtype=float)
+            else:
+                fx = np.array([float(np.nanmin(xs)), float(np.nanmax(xs))], dtype=float)
+            fy = m * (fx - x0) + b_centered
+            ax.plot(fx, fy, color=fit_color, lw=line_width, ls=ls, zorder=7)
+            handles.append(Line2D([0], [0], color=fit_color, lw=line_width, ls=ls, label=label))
+    return handles
+
 def safe_ylim_from_arrays(arrays, fallback=(0.0, 1.0), pad_frac=0.12, min_pad=0.05):
     vals = []
     for arr in arrays:
@@ -642,13 +762,17 @@ def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
         elif kind == "scatter":
             xs, yy = x_raw, y_raw
             ax.scatter(xs, yy, s=16, color=color, alpha=0.65, edgecolor="none", zorder=5)
-            fit_mask = robust_fit_mask(xs, yy)
-            if int(np.sum(fit_mask)) >= 2:
-                m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
-                fx = np.array([np.nanmin(xs), np.nanmax(xs)])
-                ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
-            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid data"),
-                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit")]
+            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid data")]
+            if sensor.lower() == "voltage":
+                state_fit_handles = plot_voltage_state_fits(ax, x, y, g["STATE"].astype(str).to_numpy())
+                handles += state_fit_handles
+            else:
+                fit_mask = robust_fit_mask(xs, yy)
+                if int(np.sum(fit_mask)) >= 2:
+                    m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
+                    fx = np.array([np.nanmin(xs), np.nanmax(xs)])
+                    ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
+                handles += [Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit")]
         elif kind == "dual":
             ax.plot(x, ys, color=color, lw=2.65, zorder=5)
             attach_altitude_axis(ax, g)
@@ -657,15 +781,19 @@ def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
         elif kind == "scatterdual":
             xs, yy = x_raw, y_raw
             ax.scatter(xs, yy, s=18, color=color, alpha=0.62, edgecolor="none", zorder=5)
-            fit_mask = robust_fit_mask(xs, yy)
-            if int(np.sum(fit_mask)) >= 2:
-                m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
-                fx = np.array([np.nanmin(xs), np.nanmax(xs)])
-                ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
+            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid scatter")]
+            if sensor.lower() == "voltage":
+                state_fit_handles = plot_voltage_state_fits(ax, x, y, g["STATE"].astype(str).to_numpy())
+                handles += state_fit_handles
+            else:
+                fit_mask = robust_fit_mask(xs, yy)
+                if int(np.sum(fit_mask)) >= 2:
+                    m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
+                    fx = np.array([np.nanmin(xs), np.nanmax(xs)])
+                    ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
+                handles += [Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit")]
             attach_altitude_axis(ax, g)
-            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid scatter"),
-                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit"),
-                        Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude")]
+            handles += [Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude")]
         basic_time_style(ax, title, ylabel, xlim, ylim)
         ax.legend(handles=handles, title=(sensor.upper() if "dual" not in kind else f"{sensor.upper()} / ALTITUDE"),
                   loc="upper left", bbox_to_anchor=(1.012,0.76), fontsize=9, title_fontsize=10, frameon=True)
@@ -855,17 +983,15 @@ def to_360_angle_array(values):
 
 
 
+def apply_tilt_axis_style(ax):
+    """Style Tilt axes honestly: show a 0..360 degree scale with small visual headroom.
 
-def tilt_display_array(values):
-    """Plot-only display array for tilt angles.
-
-    Data remain 0..360 degrees, but the rendered line is clipped slightly inside
-    the frame so samples at exactly 0 or 360 do not collide with the plot border
-    or the state strip. This is only for readability; it does not change the
-    normalized source data.
+    Do not clip values, do not rewrite values to 2..358, and do not split the line
+    at every wrap. This keeps the graph readable without changing the source data.
     """
-    arr = to_360_angle_array(values)
-    return np.clip(arr, TILT_DISPLAY_CLIP[0], TILT_DISPLAY_CLIP[1])
+    ax.set_ylim(*TILT_VIEW_YLIM)
+    ax.set_yticks(TILT_MAJOR_TICKS)
+    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
 
 
 def choose_tilt_rate_columns(df):
@@ -880,9 +1006,7 @@ def choose_tilt_rate_columns(df):
     - GYRO fallback is intentionally not used because gyro is angular rate, not angle.
     """
     direct = ["TILT_R", "TILT_P", "TILT_Y"]
-    # Some normalized logs expose physical attitude as ROLL/PITCH/YAW, not TILT_R/P/Y.
-    # Treat those as the normal 3-axis Tilt family before falling back to YAW-only.
-    attitude = ["ROLL", "PITCH", "YAW"]
+    raw_attitude = ["ROLL", "PITCH", "YAW"]
     derived = ["TILT_ROLL_DERIVED", "TILT_PITCH_DERIVED", "TILT_YAW_DERIVED"]
     yaw_only = ["YAW"]
 
@@ -890,13 +1014,16 @@ def choose_tilt_rate_columns(df):
     labels_direct = {"TILT_R": "Tilt Roll Angle", "TILT_P": "Tilt Pitch Angle", "TILT_Y": "Tilt Yaw Angle"}
     if len(direct_ok) >= 3:
         return direct, [labels_direct[c] for c in direct], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
+
+    # Log Field style: roll/pitch/yaw are stored as ROLL, PITCH, YAW.
+    # Treat them as the Tilt 3-axis family before falling back to derived or YAW-only.
+    raw_ok, raw_stats = valid_numeric_columns(df, raw_attitude, min_samples=10, min_range=1e-4)
+    labels_raw = {"ROLL": "Tilt Roll Angle", "PITCH": "Tilt Pitch Angle", "YAW": "Tilt Yaw Angle"}
+    if len(raw_ok) >= 3:
+        return raw_attitude, [labels_raw[c] for c in raw_attitude], "Tilt Angle (°)", "ROLL/PITCH/YAW attitude columns", raw_stats
+
     if len(direct_ok) >= 1:
         return direct_ok, [labels_direct[c] for c in direct_ok], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
-
-    attitude_ok, attitude_stats = valid_numeric_columns(df, attitude, min_samples=10, min_range=1e-4)
-    labels_attitude = {"ROLL": "Tilt Roll Angle", "PITCH": "Tilt Pitch Angle", "YAW": "Tilt Yaw Angle"}
-    if len(attitude_ok) >= 3:
-        return attitude, [labels_attitude[c] for c in attitude], "Tilt Angle (°)", "ROLL/PITCH/YAW attitude columns", attitude_stats
 
     derived_ok, derived_stats = valid_numeric_columns(df, derived, min_samples=10, min_range=1e-4)
     yaw_ok, yaw_stats = valid_numeric_columns(df, yaw_only, min_samples=10, min_range=1e-4)
@@ -926,7 +1053,7 @@ def choose_tilt_rate_columns(df):
         labels = {"YAW": "Tilt Yaw / Heading Angle"}
         return yaw_ok, [labels[c] for c in yaw_ok], "Tilt Angle (°)", "YAW angle fallback", yaw_stats
 
-    all_stats = {"direct": direct_stats, "attitude": attitude_stats, "derived": derived_stats, "yaw": yaw_stats}
+    all_stats = {"direct": direct_stats, "raw_attitude": raw_stats if 'raw_stats' in locals() else {}, "derived": derived_stats, "yaw": yaw_stats}
     return [], [], "Tilt Angle (°)", "unavailable", all_stats
 
 
@@ -963,7 +1090,7 @@ def generate_multi_axis(df, outdir):
         x = g["T"].to_numpy(dtype=float, copy=True); segs = make_segments(g)
         ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
         if key == "tilt":
-            ys = [tilt_display_array(y) for y in ys]
+            ys = [to_360_angle_array(y) for y in ys]
             ylim = TILT_YLIM
         else:
             ylim = global_ylim(ys)
@@ -992,11 +1119,7 @@ def generate_multi_axis(df, outdir):
                     mode=f"focus_{mode_i+1}"
                 basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, ylim)
                 if key == "tilt":
-                    # Keep readable 0..360 scale labels, but add a few degrees of headroom
-                    # so traces at 360° do not sit on the top border/state strip.
-                    ax.set_ylim(*TILT_PLOT_YLIM)
-                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
-                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
+                    apply_tilt_axis_style(ax)
                 if dual:
                     attach_altitude_axis(ax,g)
                     handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
@@ -1013,10 +1136,7 @@ def generate_multi_axis(df, outdir):
                 ax.set_ylabel(label_with_unit(lab, unit),fontsize=10.5)
                 ax.set_xlim(*xlim); ax.set_ylim(*ylim)
                 if key == "tilt":
-                    # Keep tick scale at 0..360 while giving traces a small visual margin.
-                    ax.set_ylim(*TILT_PLOT_YLIM)
-                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
-                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
+                    apply_tilt_axis_style(ax)
                 ax.grid(True,which="major",color=GRID,alpha=0.22,linewidth=0.62)
                 ax.grid(True,which="minor",color=GRID,alpha=0.09,linewidth=0.32)
                 if key != "tilt":
@@ -1033,34 +1153,39 @@ def generate_multi_axis(df, outdir):
             fig.subplots_adjust(right=0.84,hspace=0.16)
             p=outdir/f"{key}_compared_stacked{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
-        # Tilt-specific compare overlays required by CFDS format:
-        # compare 2 = every two-axis overlay; compare 3 = all three axes overlay.
-        # This is separate from the stacked view above.
+        # Tilt-only compare outputs. Keep this narrow: do not alter acceleration/gyro/angular families.
         if key == "tilt" and len(cols) >= 3:
-            compare_sets = [
-                ("compare_2_roll_pitch", [0, 1], "Tilt Compare 2 — Roll vs Pitch"),
-                ("compare_2_roll_yaw", [0, 2], "Tilt Compare 2 — Roll vs Yaw"),
-                ("compare_2_pitch_yaw", [1, 2], "Tilt Compare 2 — Pitch vs Yaw"),
-                ("compare_3_all_axes", [0, 1, 2], "Tilt Compare 3 — Roll vs Pitch vs Yaw"),
-            ]
+            pairs = [(0, 1, "roll_pitch"), (0, 2, "roll_yaw"), (1, 2, "pitch_yaw")]
             for dual in [False, True]:
-                for fname, idxs, title in compare_sets:
-                    fig, ax = plt.subplots(figsize=(16.4, 7.3)); fig.patch.set_facecolor("white")
+                for i, j, tag in pairs:
+                    fig, ax = plt.subplots(figsize=(16.4, 7.2)); fig.patch.set_facecolor("white")
                     add_state_background(ax, segs)
-                    handles = [Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
-                    for i in idxs:
-                        ax.plot(x, ys[i], color=colors[i], lw=2.35, alpha=0.95, zorder=5)
-                        handles.append(Line2D([0],[0], color=colors[i], lw=2.35, label=label_with_unit(labels[i], unit)))
-                    basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, TILT_PLOT_YLIM)
-                    ax.set_ylim(*TILT_PLOT_YLIM)
-                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
-                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
+                    ax.plot(x, ys[i], color=colors[i], lw=1.95, alpha=0.92, zorder=5)
+                    ax.plot(x, ys[j], color=colors[j], lw=1.95, alpha=0.82, zorder=5)
+                    basic_time_style(ax, f"{name} Compare 2 — {labels[i]} vs {labels[j]}" + (" + Altitude" if dual else ""), unit, xlim, TILT_VIEW_YLIM)
+                    apply_tilt_axis_style(ax)
+                    handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip"),
+                             Line2D([0],[0],color=colors[i],lw=1.95,label=label_with_unit(labels[i], unit)),
+                             Line2D([0],[0],color=colors[j],lw=1.95,label=label_with_unit(labels[j], unit))]
                     if dual:
-                        attach_altitude_axis(ax, g)
-                        handles.append(Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude"))
-                    ax.legend(handles=handles, title="TILT", loc="upper left", bbox_to_anchor=(1.012, 0.76), fontsize=8.9, title_fontsize=10, frameon=True)
-                    p = outdir / f"{key}_{fname}{'_dual_altitude' if dual else ''}_candidate_v2.png"
-                    savefig(fig, p); outputs += [p, p.with_suffix(".svg")]
+                        attach_altitude_axis(ax,g)
+                        handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
+                    ax.legend(handles=handles,title="TILT",loc="upper left",bbox_to_anchor=(1.012,0.76),fontsize=8.9,title_fontsize=10,frameon=True)
+                    p=outdir/f"tilt_compare_2_{tag}{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
+
+                fig, ax = plt.subplots(figsize=(16.4, 7.2)); fig.patch.set_facecolor("white")
+                add_state_background(ax, segs)
+                handles=[Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
+                for y,c,lab in zip(ys[:3],colors[:3],labels[:3]):
+                    ax.plot(x, y, color=c, lw=1.85, alpha=0.86, zorder=5)
+                    handles.append(Line2D([0],[0],color=c,lw=1.85,label=label_with_unit(lab, unit)))
+                basic_time_style(ax, f"{name} Compare 3 — Roll / Pitch / Yaw" + (" + Altitude" if dual else ""), unit, xlim, TILT_VIEW_YLIM)
+                apply_tilt_axis_style(ax)
+                if dual:
+                    attach_altitude_axis(ax,g)
+                    handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
+                ax.legend(handles=handles,title="TILT",loc="upper left",bbox_to_anchor=(1.012,0.76),fontsize=8.9,title_fontsize=10,frameon=True)
+                p=outdir/f"tilt_compare_3_all_axes{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
     return outputs
 
 # ---------------- CONOPS ----------------
