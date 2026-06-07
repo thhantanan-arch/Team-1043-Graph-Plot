@@ -27,6 +27,9 @@ from scipy.interpolate import PchipInterpolator
 
 FS = 5.0
 PRE_LAUNCH = 3.0
+TILT_YLIM = (0.0, 360.0)  # v0.5.16: fixed tilt angle scale restored to 0..360; do not alter state strip scale
+TILT_MAJOR_STEP = 90
+TILT_MINOR_STEP = 30
 POST_LANDED = 5.0
 
 STATE_COLORS = {
@@ -561,9 +564,12 @@ def robust_fit_mask(x, y, window=21, mad_k=7.5, min_keep=0.85):
     local_mad = resid.abs().rolling(w, center=True, min_periods=max(3, w // 3)).median()
     scale = 1.4826 * local_mad
 
-    mask_ordered = (resid.abs() <= (mad_k * scale)).to_numpy(dtype=bool)
-    mask_ordered |= scale.isna().to_numpy(dtype=bool)
-    mask_ordered |= (scale.to_numpy(dtype=float) <= 1e-12)
+    # pandas/NumPy can return a read-only view here in some runtimes.
+    # Make a writable copy because the next lines intentionally update the mask.
+    mask_ordered = (resid.abs() <= (mad_k * scale)).to_numpy(dtype=bool, copy=True)
+    mask_ordered = mask_ordered.copy()
+    mask_ordered |= scale.isna().to_numpy(dtype=bool, copy=True)
+    mask_ordered |= (scale.to_numpy(dtype=float, copy=True) <= 1e-12)
 
     # Preserve mission edges. Those samples often carry real launch/landing behavior and
     # centered rolling windows are least reliable there.
@@ -839,7 +845,9 @@ def to_360_angle_array(values):
     -90 -> 270, -1 -> 359, 180 -> 180, 360 -> 0.
     """
     arr = np.asarray(values, dtype=float)
-    out = np.mod(arr, 360.0)
+    # Force a writable array. Some pandas/Arrow backed arrays can be read-only,
+    # and assigning NaN into a read-only output can crash the whole graph family.
+    out = np.mod(arr, 360.0).astype(float, copy=True)
     out[~np.isfinite(arr)] = np.nan
     return out
 
@@ -847,32 +855,49 @@ def to_360_angle_array(values):
 def choose_tilt_rate_columns(df):
     """Choose tilt-angle columns for the 0..360 degree tilt graph.
 
-    v0.5.15 rule:
-    - Tilt graph is an ANGLE graph, not a rate graph.
-    - Values are converted from -180..180 into 0..360 using angle % 360.
-    - Direct/derived tilt columns are preferred.
-    - If only YAW is available, generate a one-axis tilt heading graph.
-    - GYRO fallback is intentionally not used here because gyro is angular rate, not angle.
+    v0.5.15+hotfix rule:
+    - Keep the original three-color tilt format whenever three physical axes can be formed.
+    - Prefer direct tilt roll/pitch/yaw columns.
+    - If only derived roll/pitch exist but YAW exists, combine derived roll + derived pitch + YAW
+      so the tilt overview still has 3 colored axes instead of silently becoming a 2-axis graph.
+    - If only one heading/yaw column exists, use it as a last-resort fallback.
+    - GYRO fallback is intentionally not used because gyro is angular rate, not angle.
     """
     direct = ["TILT_R", "TILT_P", "TILT_Y"]
     derived = ["TILT_ROLL_DERIVED", "TILT_PITCH_DERIVED", "TILT_YAW_DERIVED"]
     yaw_only = ["YAW"]
 
     direct_ok, direct_stats = valid_numeric_columns(df, direct, min_samples=10, min_range=1e-4)
+    labels_direct = {"TILT_R": "Tilt Roll Angle", "TILT_P": "Tilt Pitch Angle", "TILT_Y": "Tilt Yaw Angle"}
+    if len(direct_ok) >= 3:
+        return direct, [labels_direct[c] for c in direct], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
     if len(direct_ok) >= 1:
-        labels = {"TILT_R": "Tilt Roll Angle", "TILT_P": "Tilt Pitch Angle", "TILT_Y": "Tilt Yaw Angle"}
-        return direct_ok, [labels[c] for c in direct_ok], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
+        return direct_ok, [labels_direct[c] for c in direct_ok], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
 
     derived_ok, derived_stats = valid_numeric_columns(df, derived, min_samples=10, min_range=1e-4)
-    if len(derived_ok) >= 1:
-        labels = {
-            "TILT_ROLL_DERIVED": "Tilt Roll Angle",
-            "TILT_PITCH_DERIVED": "Tilt Pitch Angle",
-            "TILT_YAW_DERIVED": "Tilt Yaw Angle",
-        }
-        return derived_ok, [labels[c] for c in derived_ok], "Tilt Angle (°)", "derived tilt angle columns", derived_stats
-
     yaw_ok, yaw_stats = valid_numeric_columns(df, yaw_only, min_samples=10, min_range=1e-4)
+    labels_derived = {
+        "TILT_ROLL_DERIVED": "Tilt Roll Angle",
+        "TILT_PITCH_DERIVED": "Tilt Pitch Angle",
+        "TILT_YAW_DERIVED": "Tilt Yaw Angle",
+        "YAW": "Tilt Yaw Angle",
+    }
+
+    # Preserve the expected 3-color tilt family for normalized_flight1043-style logs:
+    # derived roll + derived pitch + raw YAW heading.
+    combined = []
+    for c in ["TILT_ROLL_DERIVED", "TILT_PITCH_DERIVED", "TILT_YAW_DERIVED"]:
+        if c in derived_ok:
+            combined.append(c)
+    if "TILT_YAW_DERIVED" not in combined and "YAW" in yaw_ok:
+        combined.append("YAW")
+    if len(combined) >= 3:
+        combined = combined[:3]
+        return combined, [labels_derived[c] for c in combined], "Tilt Angle (°)", "derived tilt + YAW heading columns", {"derived": derived_stats, "yaw": yaw_stats}
+
+    if len(derived_ok) >= 1:
+        return derived_ok, [labels_derived[c] for c in derived_ok], "Tilt Angle (°)", "derived tilt angle columns", derived_stats
+
     if len(yaw_ok) >= 1:
         labels = {"YAW": "Tilt Yaw / Heading Angle"}
         return yaw_ok, [labels[c] for c in yaw_ok], "Tilt Angle (°)", "YAW angle fallback", yaw_stats
@@ -915,7 +940,7 @@ def generate_multi_axis(df, outdir):
         ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
         if key == "tilt":
             ys = [to_360_angle_array(y) for y in ys]
-            ylim = (0.0, 360.0)
+            ylim = TILT_YLIM
         else:
             ylim = global_ylim(ys)
         xlim=(-PRE_LAUNCH,float(x.max()))
@@ -943,9 +968,9 @@ def generate_multi_axis(df, outdir):
                     mode=f"focus_{mode_i+1}"
                 basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, ylim)
                 if key == "tilt":
-                    ax.set_ylim(0, 360)
-                    ax.yaxis.set_major_locator(MultipleLocator(60))
-                    ax.yaxis.set_minor_locator(MultipleLocator(30))
+                    ax.set_ylim(*TILT_YLIM)
+                    ax.yaxis.set_major_locator(MultipleLocator(TILT_MAJOR_STEP))
+                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
                 if dual:
                     attach_altitude_axis(ax,g)
                     handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
@@ -962,9 +987,9 @@ def generate_multi_axis(df, outdir):
                 ax.set_ylabel(label_with_unit(lab, unit),fontsize=10.5)
                 ax.set_xlim(*xlim); ax.set_ylim(*ylim)
                 if key == "tilt":
-                    ax.set_ylim(0, 360)
-                    ax.yaxis.set_major_locator(MultipleLocator(60))
-                    ax.yaxis.set_minor_locator(MultipleLocator(30))
+                    ax.set_ylim(*TILT_YLIM)
+                    ax.yaxis.set_major_locator(MultipleLocator(TILT_MAJOR_STEP))
+                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
                 ax.grid(True,which="major",color=GRID,alpha=0.22,linewidth=0.62)
                 ax.grid(True,which="minor",color=GRID,alpha=0.09,linewidth=0.32)
                 if key != "tilt":
