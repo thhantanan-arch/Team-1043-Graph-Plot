@@ -27,9 +27,11 @@ from scipy.interpolate import PchipInterpolator
 
 FS = 5.0
 PRE_LAUNCH = 3.0
-TILT_YLIM = (0.0, 360.0)  # v0.5.16: fixed tilt angle scale restored to 0..360; do not alter state strip scale
+TILT_YLIM = (0.0, 360.0)  # display scale/ticks remain 0..360
+TILT_PLOT_YLIM = (-8.0, 368.0)  # tiny visual padding so 0/360 data does not sit on frame/state strip
 TILT_MAJOR_STEP = 90
 TILT_MINOR_STEP = 30
+TILT_DISPLAY_CLIP = (2.0, 358.0)  # plot-only clamp so traces never touch 0/360 frame lines
 POST_LANDED = 5.0
 
 STATE_COLORS = {
@@ -852,6 +854,20 @@ def to_360_angle_array(values):
     return out
 
 
+
+
+def tilt_display_array(values):
+    """Plot-only display array for tilt angles.
+
+    Data remain 0..360 degrees, but the rendered line is clipped slightly inside
+    the frame so samples at exactly 0 or 360 do not collide with the plot border
+    or the state strip. This is only for readability; it does not change the
+    normalized source data.
+    """
+    arr = to_360_angle_array(values)
+    return np.clip(arr, TILT_DISPLAY_CLIP[0], TILT_DISPLAY_CLIP[1])
+
+
 def choose_tilt_rate_columns(df):
     """Choose tilt-angle columns for the 0..360 degree tilt graph.
 
@@ -864,6 +880,9 @@ def choose_tilt_rate_columns(df):
     - GYRO fallback is intentionally not used because gyro is angular rate, not angle.
     """
     direct = ["TILT_R", "TILT_P", "TILT_Y"]
+    # Some normalized logs expose physical attitude as ROLL/PITCH/YAW, not TILT_R/P/Y.
+    # Treat those as the normal 3-axis Tilt family before falling back to YAW-only.
+    attitude = ["ROLL", "PITCH", "YAW"]
     derived = ["TILT_ROLL_DERIVED", "TILT_PITCH_DERIVED", "TILT_YAW_DERIVED"]
     yaw_only = ["YAW"]
 
@@ -873,6 +892,11 @@ def choose_tilt_rate_columns(df):
         return direct, [labels_direct[c] for c in direct], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
     if len(direct_ok) >= 1:
         return direct_ok, [labels_direct[c] for c in direct_ok], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
+
+    attitude_ok, attitude_stats = valid_numeric_columns(df, attitude, min_samples=10, min_range=1e-4)
+    labels_attitude = {"ROLL": "Tilt Roll Angle", "PITCH": "Tilt Pitch Angle", "YAW": "Tilt Yaw Angle"}
+    if len(attitude_ok) >= 3:
+        return attitude, [labels_attitude[c] for c in attitude], "Tilt Angle (°)", "ROLL/PITCH/YAW attitude columns", attitude_stats
 
     derived_ok, derived_stats = valid_numeric_columns(df, derived, min_samples=10, min_range=1e-4)
     yaw_ok, yaw_stats = valid_numeric_columns(df, yaw_only, min_samples=10, min_range=1e-4)
@@ -902,7 +926,7 @@ def choose_tilt_rate_columns(df):
         labels = {"YAW": "Tilt Yaw / Heading Angle"}
         return yaw_ok, [labels[c] for c in yaw_ok], "Tilt Angle (°)", "YAW angle fallback", yaw_stats
 
-    all_stats = {"direct": direct_stats, "derived": derived_stats, "yaw": yaw_stats}
+    all_stats = {"direct": direct_stats, "attitude": attitude_stats, "derived": derived_stats, "yaw": yaw_stats}
     return [], [], "Tilt Angle (°)", "unavailable", all_stats
 
 
@@ -939,7 +963,7 @@ def generate_multi_axis(df, outdir):
         x = g["T"].to_numpy(dtype=float, copy=True); segs = make_segments(g)
         ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
         if key == "tilt":
-            ys = [to_360_angle_array(y) for y in ys]
+            ys = [tilt_display_array(y) for y in ys]
             ylim = TILT_YLIM
         else:
             ylim = global_ylim(ys)
@@ -968,8 +992,10 @@ def generate_multi_axis(df, outdir):
                     mode=f"focus_{mode_i+1}"
                 basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, ylim)
                 if key == "tilt":
-                    ax.set_ylim(*TILT_YLIM)
-                    ax.yaxis.set_major_locator(MultipleLocator(TILT_MAJOR_STEP))
+                    # Keep readable 0..360 scale labels, but add a few degrees of headroom
+                    # so traces at 360° do not sit on the top border/state strip.
+                    ax.set_ylim(*TILT_PLOT_YLIM)
+                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
                     ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
                 if dual:
                     attach_altitude_axis(ax,g)
@@ -987,8 +1013,9 @@ def generate_multi_axis(df, outdir):
                 ax.set_ylabel(label_with_unit(lab, unit),fontsize=10.5)
                 ax.set_xlim(*xlim); ax.set_ylim(*ylim)
                 if key == "tilt":
-                    ax.set_ylim(*TILT_YLIM)
-                    ax.yaxis.set_major_locator(MultipleLocator(TILT_MAJOR_STEP))
+                    # Keep tick scale at 0..360 while giving traces a small visual margin.
+                    ax.set_ylim(*TILT_PLOT_YLIM)
+                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
                     ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
                 ax.grid(True,which="major",color=GRID,alpha=0.22,linewidth=0.62)
                 ax.grid(True,which="minor",color=GRID,alpha=0.09,linewidth=0.32)
@@ -1005,6 +1032,35 @@ def generate_multi_axis(df, outdir):
             fig.legend(handles=handles,title=name.upper(),loc="center left",bbox_to_anchor=(0.885,0.5),fontsize=8.9,title_fontsize=10,frameon=True)
             fig.subplots_adjust(right=0.84,hspace=0.16)
             p=outdir/f"{key}_compared_stacked{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
+
+        # Tilt-specific compare overlays required by CFDS format:
+        # compare 2 = every two-axis overlay; compare 3 = all three axes overlay.
+        # This is separate from the stacked view above.
+        if key == "tilt" and len(cols) >= 3:
+            compare_sets = [
+                ("compare_2_roll_pitch", [0, 1], "Tilt Compare 2 — Roll vs Pitch"),
+                ("compare_2_roll_yaw", [0, 2], "Tilt Compare 2 — Roll vs Yaw"),
+                ("compare_2_pitch_yaw", [1, 2], "Tilt Compare 2 — Pitch vs Yaw"),
+                ("compare_3_all_axes", [0, 1, 2], "Tilt Compare 3 — Roll vs Pitch vs Yaw"),
+            ]
+            for dual in [False, True]:
+                for fname, idxs, title in compare_sets:
+                    fig, ax = plt.subplots(figsize=(16.4, 7.3)); fig.patch.set_facecolor("white")
+                    add_state_background(ax, segs)
+                    handles = [Patch(facecolor=STATE_COLORS["ASCENT"], alpha=STATE_LEGEND_ALPHA, label="State highlight / strip")]
+                    for i in idxs:
+                        ax.plot(x, ys[i], color=colors[i], lw=2.35, alpha=0.95, zorder=5)
+                        handles.append(Line2D([0],[0], color=colors[i], lw=2.35, label=label_with_unit(labels[i], unit)))
+                    basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, TILT_PLOT_YLIM)
+                    ax.set_ylim(*TILT_PLOT_YLIM)
+                    ax.set_yticks(np.arange(TILT_YLIM[0], TILT_YLIM[1] + 0.1, TILT_MAJOR_STEP))
+                    ax.yaxis.set_minor_locator(MultipleLocator(TILT_MINOR_STEP))
+                    if dual:
+                        attach_altitude_axis(ax, g)
+                        handles.append(Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude"))
+                    ax.legend(handles=handles, title="TILT", loc="upper left", bbox_to_anchor=(1.012, 0.76), fontsize=8.9, title_fontsize=10, frameon=True)
+                    p = outdir / f"{key}_{fname}{'_dual_altitude' if dual else ''}_candidate_v2.png"
+                    savefig(fig, p); outputs += [p, p.with_suffix(".svg")]
     return outputs
 
 # ---------------- CONOPS ----------------
