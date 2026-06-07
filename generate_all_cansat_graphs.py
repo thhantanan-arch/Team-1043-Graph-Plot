@@ -47,6 +47,7 @@ TEXT = "#1F2937"
 ALT_COLOR = "#0B6FA4"
 DARK = "#070B17"
 
+# v0.5.21 compare rule: Compare 2/3 are stacked subplot graphs, not multi-line overlay.
 # v0.5.12 graph visibility: stronger state bands and measured-end behavior.
 STATE_BG_ALPHA = 0.145
 STATE_STRIP_ALPHA = 0.985
@@ -1127,7 +1128,7 @@ def generate_multi_axis(df, outdir):
                 p=outdir/f"{key}_{mode}{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
         # compared stacked normal and dual
         for dual in [False, True]:
-            fig, axes = plt.subplots(len(cols),1,figsize=(16.2,2.9*len(cols)+1.4),sharex=True,sharey=True)
+            fig, axes = plt.subplots(len(cols),1,figsize=(16.2,2.9*len(cols)+1.4),sharex=True,sharey=False)
             if len(cols)==1: axes=[axes]
             fig.patch.set_facecolor("white")
             for ax,y,c,lab in zip(axes,ys,colors,labels):
@@ -1153,6 +1154,7 @@ def generate_multi_axis(df, outdir):
             fig.subplots_adjust(right=0.84,hspace=0.16)
             p=outdir/f"{key}_compared_stacked{'_dual_altitude' if dual else ''}_candidate_v2.png"; savefig(fig,p); outputs += [p,p.with_suffix(".svg")]
 
+        # HOTFIX21 ACTIVE: Compare outputs are stacked graph comparisons only.
         # Compare outputs: compare = stacked graph comparison.
         # IMPORTANT PROJECT RULE:
         # - Compare 2 = 2 subplots stacked vertically, one axis per row.
@@ -1174,7 +1176,7 @@ def generate_multi_axis(df, outdir):
 
             def _save_stacked_compare(indices, title_suffix, filename_suffix, dual=False):
                 n = len(indices)
-                fig, axes = plt.subplots(n, 1, figsize=(16.2, 2.9*n + 1.4), sharex=True, sharey=True)
+                fig, axes = plt.subplots(n, 1, figsize=(16.2, 2.9*n + 1.4), sharex=True, sharey=False)
                 if n == 1:
                     axes = [axes]
                 fig.patch.set_facecolor("white")
