@@ -524,29 +524,94 @@ def generate_velocity(df, outdir):
     return outputs
 
 # ---------------- VOLTAGE / TEMPERATURE ----------------
-def iqr_filter(x, y, k=1.5):
-    x = np.asarray(x, float); y = np.asarray(y, float)
+def finite_xy(x, y):
+    """Return only finite x/y samples. This is the only filter allowed for visible scatter points."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
     ok = np.isfinite(x) & np.isfinite(y)
-    x, y = x[ok], y[ok]
+    return x[ok], y[ok]
+
+def robust_fit_mask(x, y, window=21, mad_k=7.5, min_keep=0.85):
+    """
+    Local, time-aware outlier mask for regression only.
+
+    Important CFDS rule: never use an outlier mask to remove visible voltage/temperature
+    scatter points. Early-mission battery values can be legitimately higher than later
+    samples, so a global IQR filter can erase the first part of the mission.
+    """
+    x, y = finite_xy(x, y)
     if len(y) < 8:
-        return x, y
-    q1, q3 = np.nanpercentile(y, [25, 75])
-    iqr = q3 - q1
-    if iqr <= 0:
-        return x, y
-    keep = (y >= q1 - k*iqr) & (y <= q3 + k*iqr)
-    return x[keep], y[keep]
+        return np.ones(len(y), dtype=bool)
+
+    # Work in time order so the rolling median compares each point to nearby samples,
+    # not to the full mission distribution.
+    order = np.argsort(x)
+    inv_order = np.empty_like(order)
+    inv_order[order] = np.arange(len(order))
+    yy = pd.Series(y[order], dtype="float64")
+
+    w = int(min(max(window, 5), len(yy)))
+    if w % 2 == 0:
+        w += 1 if w < len(yy) else -1
+    if w < 5:
+        return np.ones(len(y), dtype=bool)
+
+    local_med = yy.rolling(w, center=True, min_periods=max(3, w // 3)).median()
+    resid = yy - local_med
+    local_mad = resid.abs().rolling(w, center=True, min_periods=max(3, w // 3)).median()
+    scale = 1.4826 * local_mad
+
+    mask_ordered = (resid.abs() <= (mad_k * scale)).to_numpy(dtype=bool)
+    mask_ordered |= scale.isna().to_numpy(dtype=bool)
+    mask_ordered |= (scale.to_numpy(dtype=float) <= 1e-12)
+
+    # Preserve mission edges. Those samples often carry real launch/landing behavior and
+    # centered rolling windows are least reliable there.
+    edge_n = min(max(8, int(round(len(yy) * 0.04))), max(1, len(yy) // 4))
+    mask_ordered[:edge_n] = True
+    mask_ordered[-edge_n:] = True
+
+    # If the filter is still too aggressive, use all finite samples for the fit.
+    if float(np.mean(mask_ordered)) < min_keep or int(mask_ordered.sum()) < 2:
+        mask_ordered[:] = True
+
+    return mask_ordered[inv_order]
+
+def safe_ylim_from_arrays(arrays, fallback=(0.0, 1.0), pad_frac=0.12, min_pad=0.05):
+    vals = []
+    for arr in arrays:
+        a = np.asarray(arr, float)
+        a = a[np.isfinite(a)]
+        if len(a):
+            vals.append(a)
+    if not vals:
+        return fallback
+    v = np.concatenate(vals)
+    ymin, ymax = float(np.nanmin(v)), float(np.nanmax(v))
+    if not np.isfinite(ymin) or not np.isfinite(ymax):
+        return fallback
+    if abs(ymax - ymin) < 1e-12:
+        pad = max(abs(ymax) * 0.02, min_pad)
+    else:
+        pad = max((ymax - ymin) * pad_frac, min_pad)
+    return (ymin - pad, ymax + pad)
 
 def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
     g = prepare_launch_window(df, [col])
     x = g["T"].to_numpy(dtype=float, copy=True)
     y = g[col].to_numpy(dtype=float, copy=True)
+    x_raw, y_raw = finite_xy(x, y)
+    if len(y_raw) < 2:
+        return generate_placeholder(
+            outdir,
+            f"{prefix}_unavailable_placeholder.png",
+            f"{sensor} Graphs Unavailable",
+            f"{sensor} could not be plotted because column {col!r} has fewer than two finite samples in this log."
+        )
     ys = smooth_series(y, 41)
     segs = make_segments(g)
-    xlim = (-PRE_LAUNCH, float(x.max()))
-    ymin, ymax = np.nanmin([np.nanmin(y), np.nanmin(ys)]), np.nanmax([np.nanmax(y), np.nanmax(ys)])
-    pad = max((ymax-ymin)*0.12, 0.05)
-    ylim = (ymin-pad, ymax+pad)
+    xlim = (-PRE_LAUNCH, float(np.nanmax(x_raw)))
+    ylim = safe_ylim_from_arrays([y, ys], fallback=(float(np.nanmin(y_raw)) - 0.05, float(np.nanmax(y_raw)) + 0.05))
     outputs = []
     variants = [
         ("line", f"{sensor} Line", "line"),
@@ -567,29 +632,31 @@ def plot_scalar_family(df, outdir, sensor, col, ylabel, color, prefix):
             ax.plot(x, ys, color=color, lw=2.65, zorder=5)
             handles.append(Line2D([0],[0], color=color, lw=2.65, label=f"{sensor} smoothed line"))
         elif kind == "scatter":
-            xs, yy = iqr_filter(x, y)
+            xs, yy = x_raw, y_raw
             ax.scatter(xs, yy, s=16, color=color, alpha=0.65, edgecolor="none", zorder=5)
-            if len(xs) >= 2:
-                m,b = np.polyfit(xs, yy, 1)
+            fit_mask = robust_fit_mask(xs, yy)
+            if int(np.sum(fit_mask)) >= 2:
+                m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
                 fx = np.array([np.nanmin(xs), np.nanmax(xs)])
                 ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
-            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} filtered data"),
-                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Linear regression fit")]
+            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid data"),
+                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit")]
         elif kind == "dual":
             ax.plot(x, ys, color=color, lw=2.65, zorder=5)
             attach_altitude_axis(ax, g)
             handles += [Line2D([0],[0], color=color, lw=2.65, label=f"{sensor} smoothed line"),
                         Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude")]
         elif kind == "scatterdual":
-            xs, yy = iqr_filter(x, y)
+            xs, yy = x_raw, y_raw
             ax.scatter(xs, yy, s=18, color=color, alpha=0.62, edgecolor="none", zorder=5)
-            if len(xs) >= 2:
-                m,b = np.polyfit(xs, yy, 1)
+            fit_mask = robust_fit_mask(xs, yy)
+            if int(np.sum(fit_mask)) >= 2:
+                m,b = np.polyfit(xs[fit_mask], yy[fit_mask], 1)
                 fx = np.array([np.nanmin(xs), np.nanmax(xs)])
                 ax.plot(fx, m*fx+b, color="#202020", lw=2.45, ls="--", zorder=6)
             attach_altitude_axis(ax, g)
-            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} filtered scatter"),
-                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Linear regression fit"),
+            handles += [Line2D([0],[0], marker="o", color="w", markerfacecolor=color, markersize=6, label=f"{sensor} raw valid scatter"),
+                        Line2D([0],[0], color="#202020", lw=2.45, ls="--", label="Robust linear fit"),
                         Line2D([0],[0], color="#F28E2B", lw=1.85, label="Altitude")]
         basic_time_style(ax, title, ylabel, xlim, ylim)
         ax.legend(handles=handles, title=(sensor.upper() if "dual" not in kind else f"{sensor.upper()} / ALTITUDE"),
@@ -764,42 +831,59 @@ def valid_numeric_columns(df, columns, min_samples=10, min_range=1e-6):
     return ok, stats
 
 
-def choose_tilt_rate_columns(df):
-    """Choose actual tilt-rate columns.
 
-    Frozen rule: Tilt graph unit is degree/s.
-    If derived tilt columns are empty placeholders, use GYRO_R/P/Y as tilt-rate fallback.
+def to_360_angle_array(values):
+    """Convert angle samples to 0..360 degrees using modulo.
+
+    Keeps NaN values as NaN. Examples:
+    -90 -> 270, -1 -> 359, 180 -> 180, 360 -> 0.
+    """
+    arr = np.asarray(values, dtype=float)
+    out = np.mod(arr, 360.0)
+    out[~np.isfinite(arr)] = np.nan
+    return out
+
+
+def choose_tilt_rate_columns(df):
+    """Choose tilt-angle columns for the 0..360 degree tilt graph.
+
+    v0.5.15 rule:
+    - Tilt graph is an ANGLE graph, not a rate graph.
+    - Values are converted from -180..180 into 0..360 using angle % 360.
+    - Direct/derived tilt columns are preferred.
+    - If only YAW is available, generate a one-axis tilt heading graph.
+    - GYRO fallback is intentionally not used here because gyro is angular rate, not angle.
     """
     direct = ["TILT_R", "TILT_P", "TILT_Y"]
     derived = ["TILT_ROLL_DERIVED", "TILT_PITCH_DERIVED", "TILT_YAW_DERIVED"]
-    gyro = ["GYRO_R", "GYRO_P", "GYRO_Y"]
+    yaw_only = ["YAW"]
 
     direct_ok, direct_stats = valid_numeric_columns(df, direct, min_samples=10, min_range=1e-4)
-    if len(direct_ok) >= 2:
-        labels = {"TILT_R": "Tilt Roll Rate", "TILT_P": "Tilt Pitch Rate", "TILT_Y": "Tilt Yaw Rate"}
-        return direct_ok, [labels[c] for c in direct_ok], "Tilt Rate (degree/s)", "direct tilt columns", direct_stats
+    if len(direct_ok) >= 1:
+        labels = {"TILT_R": "Tilt Roll Angle", "TILT_P": "Tilt Pitch Angle", "TILT_Y": "Tilt Yaw Angle"}
+        return direct_ok, [labels[c] for c in direct_ok], "Tilt Angle (°)", "direct tilt angle columns", direct_stats
 
     derived_ok, derived_stats = valid_numeric_columns(df, derived, min_samples=10, min_range=1e-4)
-    if len(derived_ok) >= 2:
+    if len(derived_ok) >= 1:
         labels = {
-            "TILT_ROLL_DERIVED": "Tilt Roll Rate",
-            "TILT_PITCH_DERIVED": "Tilt Pitch Rate",
-            "TILT_YAW_DERIVED": "Tilt Yaw Rate",
+            "TILT_ROLL_DERIVED": "Tilt Roll Angle",
+            "TILT_PITCH_DERIVED": "Tilt Pitch Angle",
+            "TILT_YAW_DERIVED": "Tilt Yaw Angle",
         }
-        return derived_ok, [labels[c] for c in derived_ok], "Tilt Rate (degree/s)", "derived tilt columns", derived_stats
+        return derived_ok, [labels[c] for c in derived_ok], "Tilt Angle (°)", "derived tilt angle columns", derived_stats
 
-    gyro_ok, gyro_stats = valid_numeric_columns(df, gyro, min_samples=10, min_range=1e-4)
-    if len(gyro_ok) >= 2:
-        labels = {"GYRO_R": "Tilt Roll Rate", "GYRO_P": "Tilt Pitch Rate", "GYRO_Y": "Tilt Yaw Rate"}
-        return gyro_ok, [labels[c] for c in gyro_ok], "Tilt Rate (degree/s)", "GYRO fallback", gyro_stats
+    yaw_ok, yaw_stats = valid_numeric_columns(df, yaw_only, min_samples=10, min_range=1e-4)
+    if len(yaw_ok) >= 1:
+        labels = {"YAW": "Tilt Yaw / Heading Angle"}
+        return yaw_ok, [labels[c] for c in yaw_ok], "Tilt Angle (°)", "YAW angle fallback", yaw_stats
 
-    all_stats = {"direct": direct_stats, "derived": derived_stats, "gyro": gyro_stats}
-    return [], [], "Tilt Rate (degree/s)", "unavailable", all_stats
+    all_stats = {"direct": direct_stats, "derived": derived_stats, "yaw": yaw_stats}
+    return [], [], "Tilt Angle (°)", "unavailable", all_stats
 
 
 def generate_multi_axis(df, outdir):
     # Multi-axis units are explicit so every graph/axis has a unit label.
-    # Tilt is treated as rate in degree/s, matching the frozen project rule.
+    # Tilt is treated as angle in degrees and normalized to 0..360.
     families = [
         ("acceleration","Acceleration",["ACCEL_R","ACCEL_P","ACCEL_Y"],["Accel R","Accel P","Accel Y"],"Acceleration (m/s²)"),
         ("gyro","Gyro",["GYRO_R","GYRO_P","GYRO_Y"],["Gyro R","Gyro P","Gyro Y"],"Gyro Rate (degree/s)"),
@@ -819,7 +903,7 @@ def generate_multi_axis(df, outdir):
             outdir,
             "tilt_unavailable_placeholder.png",
             "Tilt Graphs Unavailable",
-            "No usable tilt-rate data found. Checked direct tilt, derived tilt, and GYRO_R/P/Y fallback columns."
+            "No usable tilt-angle data found. Checked direct tilt, derived tilt, and YAW fallback columns."
         )
 
     colors = ["#0072B2","#009E73","#CC79A7"]
@@ -827,8 +911,14 @@ def generate_multi_axis(df, outdir):
     for key,name,cols,labels,unit in families:
         if not all(c in df.columns for c in cols): continue
         g = prepare_launch_window(df, cols)
-        x = g["T"].to_numpy(dtype=float, copy=True); segs = make_segments(g); ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
-        xlim=(-PRE_LAUNCH,float(x.max())); ylim=global_ylim(ys)
+        x = g["T"].to_numpy(dtype=float, copy=True); segs = make_segments(g)
+        ys=[g[c].to_numpy(dtype=float, copy=True) for c in cols]
+        if key == "tilt":
+            ys = [to_360_angle_array(y) for y in ys]
+            ylim = (0.0, 360.0)
+        else:
+            ylim = global_ylim(ys)
+        xlim=(-PRE_LAUNCH,float(x.max()))
         # focus overview + each axis, normal and dual
         for dual in [False, True]:
             for mode_i in [None]+list(range(len(cols))):
@@ -852,6 +942,10 @@ def generate_multi_axis(df, outdir):
                     title=f"{name} Focus — {labels[mode_i]}"
                     mode=f"focus_{mode_i+1}"
                 basic_time_style(ax, title + (" + Altitude" if dual else ""), unit, xlim, ylim)
+                if key == "tilt":
+                    ax.set_ylim(0, 360)
+                    ax.yaxis.set_major_locator(MultipleLocator(60))
+                    ax.yaxis.set_minor_locator(MultipleLocator(30))
                 if dual:
                     attach_altitude_axis(ax,g)
                     handles.append(Line2D([0],[0],color="#F28E2B",lw=1.85,label="Altitude"))
@@ -867,9 +961,14 @@ def generate_multi_axis(df, outdir):
                 ax.plot(x,y,color=c,lw=2.35,zorder=5)
                 ax.set_ylabel(label_with_unit(lab, unit),fontsize=10.5)
                 ax.set_xlim(*xlim); ax.set_ylim(*ylim)
+                if key == "tilt":
+                    ax.set_ylim(0, 360)
+                    ax.yaxis.set_major_locator(MultipleLocator(60))
+                    ax.yaxis.set_minor_locator(MultipleLocator(30))
                 ax.grid(True,which="major",color=GRID,alpha=0.22,linewidth=0.62)
                 ax.grid(True,which="minor",color=GRID,alpha=0.09,linewidth=0.32)
-                ax.yaxis.set_major_locator(MaxNLocator(nbins=5)); ax.yaxis.set_minor_locator(AutoMinorLocator(3))
+                if key != "tilt":
+                    ax.yaxis.set_major_locator(MaxNLocator(nbins=5)); ax.yaxis.set_minor_locator(AutoMinorLocator(3))
                 ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
                 if dual: attach_altitude_axis(ax,g)
             axes[0].set_title(f"{name} Compared — Stacked Axes" + (" + Altitude" if dual else ""), fontsize=19, fontweight="bold", pad=12)
