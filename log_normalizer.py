@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -152,35 +153,93 @@ def _read_csv_trim_extra(path: Path) -> Tuple[pd.DataFrame, Dict[str, int]]:
 
 
 def _read_excel_all_sheets(path: Path) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """Read Excel flight logs safely.
+
+    Default behavior is single-sheet selection, not concatenation.
+    Mixed workbooks often contain a public flight sheet plus an SD/raw sheet with
+    different row rates/timebases. Concatenating them can fake a landing or extend
+    the mission beyond the last sample of the sheet the user is checking.
+
+    Overrides:
+    - CFDS_EXCEL_SHEET=<sheet name> forces one sheet.
+    - CFDS_EXCEL_CONCAT_SHEETS=1 restores old concatenate-all behavior.
+    """
     sheets = pd.read_excel(path, sheet_name=None)
-    frames = []
+    valid_frames = []
     sheet_reports = {}
-    for name, sdf in sheets.items():
+    forced_sheet = os.environ.get("CFDS_EXCEL_SHEET", "").strip()
+    concat_mode = os.environ.get("CFDS_EXCEL_CONCAT_SHEETS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+    for order, (name, sdf) in enumerate(sheets.items()):
         if sdf is None or sdf.empty:
             sheet_reports[name] = {"rows_raw": 0, "used": False, "reason": "empty sheet"}
             continue
         sdf = sdf.dropna(how="all").copy()
         sdf, rename = _rename_columns(sdf)
         has_core = {"PACKET_COUNT", "STATE", "ALTITUDE"}.issubset(set(sdf.columns))
+        alt = pd.to_numeric(sdf["ALTITUDE"], errors="coerce") if "ALTITUDE" in sdf.columns else pd.Series(dtype=float)
+        states = sdf["STATE"].astype(str).str.upper() if "STATE" in sdf.columns else pd.Series(dtype=str)
+        max_alt = float(alt.max()) if alt.notna().any() else np.nan
+        last_alt = float(alt.dropna().iloc[-1]) if alt.notna().any() else np.nan
+        row_count = int(len(sdf))
+        state_good = int(states.isin(["LAUNCH_PAD", "ASCENT", "APOGEE", "DESCENT", "PROBE_RELEASE", "PAYLOAD_RELEASE", "LANDED"]).sum()) if len(states) else 0
+        name_u = str(name).upper()
+        name_bonus = 35 if any(k in name_u for k in ["FLIGHT", "MISSION"]) else 0
+        sd_penalty = -35 if any(k in name_u for k in ["SD_LOG", "RAW", "DEBUG"]) else 0
+        score = (
+            (100 if has_core else -999)
+            + min(row_count, 2000) / 40.0
+            + min(max(max_alt if np.isfinite(max_alt) else 0.0, 0.0), 1000.0) / 20.0
+            + min(state_good, 1000) / 35.0
+            + name_bonus
+            + sd_penalty
+            - order * 2.0
+        )
+        sdf["SOURCE_SHEET"] = str(name)
         sheet_reports[name] = {
-            "rows_raw": int(len(sdf)),
+            "rows_raw": row_count,
             "columns": [str(c) for c in sdf.columns],
             "rename_map": rename,
-            "used": bool(has_core),
+            "has_core": bool(has_core),
+            "score": float(score),
+            "max_altitude_m": max_alt,
+            "last_altitude_m": last_alt,
+            "used": False,
         }
         if has_core:
-            sdf["SOURCE_SHEET"] = str(name)
-            frames.append(sdf)
+            valid_frames.append((score, order, name, sdf))
 
-    if frames:
-        out = pd.concat(frames, ignore_index=True, sort=False)
-    else:
-        # fallback first sheet for a useful error report later
-        first_name = next(iter(sheets.keys())) if sheets else "Sheet1"
-        out = sheets[first_name] if sheets else pd.DataFrame()
+    if forced_sheet:
+        if forced_sheet not in sheets:
+            raise ValueError(f"CFDS_EXCEL_SHEET={forced_sheet!r} not found. Available sheets: {list(sheets.keys())}")
+        out = sheets[forced_sheet].dropna(how="all").copy()
         out, _ = _rename_columns(out)
-        out["SOURCE_SHEET"] = first_name
-    return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys())}
+        out["SOURCE_SHEET"] = forced_sheet
+        if forced_sheet in sheet_reports:
+            sheet_reports[forced_sheet]["used"] = True
+            sheet_reports[forced_sheet]["selection_reason"] = "forced_by_CFDS_EXCEL_SHEET"
+        return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "forced_single_sheet", "selected_sheet": forced_sheet}
+
+    if concat_mode and valid_frames:
+        frames = []
+        for _score, _order, name, sdf in valid_frames:
+            sheet_reports[name]["used"] = True
+            sheet_reports[name]["selection_reason"] = "concat_mode"
+            frames.append(sdf)
+        out = pd.concat(frames, ignore_index=True, sort=False)
+        return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "concat_all_valid_sheets"}
+
+    if valid_frames:
+        score, order, selected_name, selected = sorted(valid_frames, key=lambda item: (-item[0], item[1]))[0]
+        sheet_reports[selected_name]["used"] = True
+        sheet_reports[selected_name]["selection_reason"] = "selected_best_single_flight_sheet"
+        return selected, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "single_best_flight_sheet", "selected_sheet": str(selected_name)}
+
+    first_name = next(iter(sheets.keys())) if sheets else "Sheet1"
+    out = sheets[first_name] if sheets else pd.DataFrame()
+    out, _ = _rename_columns(out)
+    out["SOURCE_SHEET"] = first_name
+    return out, {"sheet_reports": sheet_reports, "sheets_found": list(sheets.keys()), "excel_sheet_policy": "fallback_first_sheet", "selected_sheet": first_name}
 
 
 def infer_state_from_altitude(df: pd.DataFrame) -> pd.Series:
@@ -298,6 +357,105 @@ def detect_altitude_launch_trigger(df: pd.DataFrame, fs_hz: float = 5.0) -> Dict
     }
 
 
+
+def _mission_time_seconds(values: pd.Series) -> Tuple[pd.Series, Dict[str, object]]:
+    """
+    Parse MISSION_TIME/GPS_TIME into seconds.
+
+    Handles:
+    - HH:MM:SS / HH:MM:SS.sss strings
+    - numeric seconds
+    - datetime-like values
+    - midnight wrap
+    """
+    vals = values.copy()
+    report: Dict[str, object] = {"method": "none", "usable": False}
+    # numeric seconds first, but reject stuck columns
+    numeric = pd.to_numeric(vals, errors="coerce")
+    if numeric.notna().sum() >= 3:
+        arr = numeric.to_numpy(dtype=float)
+        finite = np.isfinite(arr)
+        if finite.sum() >= 3:
+            rng = float(np.nanmax(arr[finite]) - np.nanmin(arr[finite]))
+            unique = int(len(np.unique(np.round(arr[finite], 6))))
+            if rng > 0 and unique >= 3:
+                report.update({"method": "numeric_seconds", "usable": True, "range_s": rng, "unique": unique})
+                return pd.Series(arr, index=values.index), report
+
+    # HH:MM:SS parser; safest for USCANSAT-style mission time
+    out = []
+    ok = []
+    for v in vals:
+        s = str(v).strip()
+        m = re.match(r"^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?$", s)
+        if m:
+            h = int(m.group(1)); mi = int(m.group(2)); sec = int(m.group(3))
+            frac = float("0." + m.group(4)) if m.group(4) else 0.0
+            out.append(h*3600.0 + mi*60.0 + sec + frac)
+            ok.append(True)
+        else:
+            out.append(np.nan)
+            ok.append(False)
+    ser = pd.Series(out, index=values.index, dtype=float)
+    if ser.notna().sum() >= 3:
+        arr = ser.to_numpy(dtype=float)
+        # unwrap midnight if needed
+        add = 0.0
+        prev = np.nan
+        for i, val in enumerate(arr):
+            if not np.isfinite(val):
+                continue
+            if np.isfinite(prev) and val + add < prev - 12*3600:
+                add += 24*3600
+            arr[i] = val + add
+            prev = arr[i]
+        finite = np.isfinite(arr)
+        rng = float(np.nanmax(arr[finite]) - np.nanmin(arr[finite]))
+        unique = int(len(np.unique(np.round(arr[finite], 6))))
+        if rng > 0 and unique >= 3:
+            report.update({"method": "clock_hms", "usable": True, "range_s": rng, "unique": unique})
+            return pd.Series(arr, index=values.index), report
+
+    # fallback datetime parser
+    dt = pd.to_datetime(vals.astype(str), errors="coerce")
+    if dt.notna().sum() >= 3:
+        base = dt.dropna().iloc[0]
+        sec = (dt - base).dt.total_seconds()
+        rng = float(sec.max() - sec.min())
+        unique = int(sec.round(6).nunique(dropna=True))
+        if rng > 0 and unique >= 3:
+            report.update({"method": "pandas_datetime", "usable": True, "range_s": rng, "unique": unique})
+            return sec.astype(float), report
+
+    return pd.Series(np.nan, index=values.index, dtype=float), report
+
+
+def _build_time_from_launch(raw: pd.DataFrame, launch_packet: float, fs_hz: float = 5.0) -> Tuple[pd.Series, Dict[str, object]]:
+    """Prefer real MISSION_TIME; use packet/fs only when real time is not usable."""
+    packet = pd.to_numeric(raw["PACKET_COUNT"], errors="coerce")
+    launch_idx = int((packet - launch_packet).abs().idxmin()) if packet.notna().any() else int(raw.index[0])
+
+    if "MISSION_TIME" in raw.columns:
+        sec, rep = _mission_time_seconds(raw["MISSION_TIME"])
+        if rep.get("usable") and sec.notna().sum() >= 3:
+            t0 = float(sec.loc[launch_idx]) if pd.notna(sec.loc[launch_idx]) else float(sec.dropna().iloc[0])
+            t = sec - t0
+            # Validate monotonic and positive duration
+            finite = t.dropna()
+            if len(finite) >= 3 and float(finite.max() - finite.min()) > 0:
+                rep.update({"source": "MISSION_TIME", "launch_index": launch_idx, "launch_packet": launch_packet})
+                return t.astype(float), rep
+
+    # Packet fallback only if mission time is absent/unusable
+    t = (packet - launch_packet) / float(fs_hz)
+    return t.astype(float), {
+        "source": "PACKET_COUNT_FALLBACK",
+        "method": f"packet_count/{fs_hz:g}Hz",
+        "usable": True,
+        "launch_index": launch_idx,
+        "launch_packet": launch_packet,
+    }
+
 def normalize_log_file(source_path: Path, out_dir: Path) -> Path:
     source_path = Path(source_path)
     out_dir = Path(out_dir)
@@ -365,8 +523,12 @@ def normalize_log_file(source_path: Path, out_dir: Path) -> Path:
     raw["LAUNCH_BASELINE_M"] = launch_trigger.get("baseline_m", np.nan)
     raw["LAUNCH_THRESHOLD_M"] = launch_trigger.get("threshold_m", np.nan)
 
-    # Canonical timebase: altitude rise / accepted launch trigger is always x=0.
-    raw["T_FROM_LAUNCH_S"] = (raw["PACKET_COUNT"] - launch_packet) / 5.0
+    # Canonical timebase: altitude rise / accepted launch trigger is x=0.
+    # v0.5.11 fix: prefer real MISSION_TIME when available. Do NOT force packet_count/5
+    # on 1 Hz flight logs such as USCANSAT FLIGHT.xlsx.
+    raw["T_FROM_LAUNCH_S"], timebase_report = _build_time_from_launch(raw, launch_packet, fs_hz=5.0)
+    raw["TIMEBASE_SOURCE"] = timebase_report.get("source", "")
+    raw["TIMEBASE_METHOD"] = timebase_report.get("method", "")
 
     # X0 rule: pre-launch altitude is held at the launchpad baseline.
     baseline_m = float(launch_trigger.get("baseline_m", np.nan)) if pd.notna(launch_trigger.get("baseline_m", np.nan)) else 0.0
@@ -423,6 +585,7 @@ def normalize_log_file(source_path: Path, out_dir: Path) -> Path:
     event_report = {
         "launch_packet": launch_packet,
         "launch_trigger": launch_trigger,
+        "timebase": timebase_report,
         "apogee_by_max_altitude": row_info(apogee),
         "target_80_altitude_m": target80,
         "payload_release_by_state": row_info(release_state.iloc[0]) if not release_state.empty else None,
